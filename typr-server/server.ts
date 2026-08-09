@@ -26,6 +26,9 @@ const DEFAULT_SERVER_VERSION = "0.1.0";
 const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 const IMPLEMENTED_ENGINES = ["pdflatex"] as const;
 const DEFAULT_ALLOWED_ORIGINS = new Set([
+  "https://typr.ca",
+  "https://beta.typr.ca",
+  "https://dev.typr.ca",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
   "http://[::1]:5173"

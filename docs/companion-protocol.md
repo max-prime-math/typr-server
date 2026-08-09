@@ -52,7 +52,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 
 If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` compile request receives a typed `native-compiler-unavailable` failure rather than terminating the server.
 
-For local PWA development, CORS is limited by default to Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A local setup using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. No wildcard CORS, authentication, or remote-server security model is provided.
+By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS, authentication, or remote-server security model is provided.
 
 **Security warning:** this server is for local development only. It has no authentication and must not be exposed directly to a network or the public internet.
 

@@ -34,6 +34,19 @@ describe("typr-server Companion API", () => {
     });
   });
 
+  it.each(["https://typr.ca", "https://beta.typr.ca", "https://dev.typr.ca"])(
+    "allows the official Typr origin %s by default",
+    async (origin) => {
+      const baseUrl = await startServer(createTyprServer({ isPdflatexAvailable: async () => true }));
+      const response = await fetch(`${baseUrl}/api/v1/status`, {
+        headers: { Origin: origin }
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+    }
+  );
+
   it("rejects malformed compile payloads", async () => {
     const baseUrl = await startServer(createTyprServer());
     const response = await postJson(baseUrl, { protocolVersion: 1 });

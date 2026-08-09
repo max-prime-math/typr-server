@@ -139,7 +139,7 @@ There is no Companion cache volume to remove and uninstalling the container does
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
 - **Unraid:** use repository `ghcr.io/max-prime-math/typr-server`, tag `latest` or a pinned release, container port 8484, and host port 8484. No volume or required environment variable is needed. The default Typr URL points to the browser device's own loopback, so a Companion on a separate Unraid host would require LAN exposure; that is outside the current unauthenticated trusted-local security model and is not recommended. amd64 is covered by the image workflow; no Community Applications template is currently provided.
 
-The GitHub workflow is configured to build and run the complete backend Docker suite for amd64 and arm64. On GitHub-hosted runners, amd64 is native and arm64 is exercised through QEMU emulation. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
+The GitHub workflow is configured to build and run the complete backend Docker suite natively on GitHub-hosted amd64 and arm64 runners. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
 
 ## Local development image
 

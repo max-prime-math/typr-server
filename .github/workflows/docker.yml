@@ -3,7 +3,7 @@ name: Docker Companion
 on:
   pull_request:
   push:
-    branches: [dev, development, beta, main]
+    branches: [dev, beta, main]
     tags: ["v*.*.*"]
   workflow_dispatch:
 
@@ -45,15 +45,17 @@ jobs:
 
   test-image:
     name: Build and test (${{ matrix.platform }})
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
             arch: amd64
+            runner: ubuntu-latest
           - platform: linux/arm64
             arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,11 +68,6 @@ jobs:
 
       - name: Install test dependencies
         run: npm ci
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -223,7 +220,6 @@ jobs:
     name: Verify published image (${{ matrix.platform }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: publish
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
@@ -233,16 +229,14 @@ jobs:
         include:
           - platform: linux/amd64
             arch: amd64
+            runner: ubuntu-latest
           - platform: linux/arm64
             arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
