@@ -89,7 +89,7 @@ curl -sS http://127.0.0.1:8484/api/v1/status
 
 The image's Docker health check calls that same endpoint every 30 seconds (after a short startup period). It verifies HTTP responsiveness; it intentionally does not add a Docker-specific API or run a TeX compile each time.
 
-Typr reaches the Dockerized Companion exactly as it reaches the directly-run server: its default URL is already `http://127.0.0.1:8484`. Start Typr normally and it will detect the container through its existing status lifecycle. Set `VITE_TYPR_COMPANION_URL` only when deliberately publishing the container on a different local host port.
+Typr reaches the Dockerized Companion exactly as it reaches the directly-run server: its default URL is already `http://127.0.0.1:8484`. Start Typr normally and it will detect the container through its existing status lifecycle. A user can change the URL at runtime under **Settings → Editor → Typr Companion**; the value is stored in that browser. `VITE_TYPR_COMPANION_URL` changes the build's default URL for a custom deployment.
 
 ### Environment and process behavior
 
@@ -118,7 +118,7 @@ This supplies the advertised `pdflatex` engine and the common document classes, 
 
 The Dockerfile has a small TeXpresso build stage and a separate runtime stage. The build stage contains the C/C++ compiler and development headers needed by TeXpresso; the final runtime receives `texpresso`, `texpresso-xetex`, their shared runtime libraries, Node, the existing TeX toolchain, and the small `ws` transport dependency. `typr-server` still has no emitted JavaScript artifact: Node runs its small TypeScript source with the same type-stripping mode used by `npm run companion`. The explicit [`.dockerignore`](../.dockerignore) sends only those runtime files to Docker.
 
-The selected Node base image and Debian packages have `linux/amd64` and `linux/arm64` builds, and TeXpresso is compiled from pinned source inside each target architecture rather than copied as an architecture-specific binary. The Docker workflow runs the REST, persistent TeXpresso, raster, and WebSocket suites natively on GitHub's amd64 runner and under QEMU for arm64 before publishing `ghcr.io/max-prime-math/typr-server`. Historical local amd64 measurements were approximately 396 MiB compressed; release manifests should be inspected for current per-architecture sizes rather than treating that number as fixed.
+The selected Node base image and Debian packages have `linux/amd64` and `linux/arm64` builds, and TeXpresso is compiled from pinned source inside each target architecture rather than copied as an architecture-specific binary. The Docker workflow runs the REST, persistent TeXpresso, raster, and WebSocket suites natively on GitHub's amd64 and arm64 runners before publishing `ghcr.io/max-prime-math/typr-server`. Historical local amd64 measurements were approximately 396 MiB compressed; release manifests should be inspected for current per-architecture sizes rather than treating that number as fixed.
 
 ### Toolchain boundary and security
 
@@ -462,7 +462,7 @@ Then start Typr normally in another:
 npm run dev
 ```
 
-Typr checks `GET /api/v1/status` at startup and about every 15 seconds. The default Companion URL is `http://127.0.0.1:8484`, matching the server's default bind address; set `VITE_TYPR_COMPANION_URL` before starting Vite to use a different local URL. A compatible server which advertises `pdflatex` is selected automatically for Typr's `pdftex_bibtex8` LaTeX mode. The Editor settings panel shows the current Companion connection state and advertised engines.
+Typr checks `GET /api/v1/status` at startup and about every 15 seconds. The default Companion URL is `http://127.0.0.1:8484`, matching the server's default bind address. Change it at runtime under **Settings → Editor → Typr Companion**, or set `VITE_TYPR_COMPANION_URL` before building to choose a different default. A compatible server which advertises `pdflatex` is selected automatically for Typr's `pdftex_bibtex8` LaTeX mode. The Editor settings panel shows the current Companion connection state and advertised engines.
 
 Every native compile sends the complete project: all normal project files, the current unsaved editor source, and binary assets such as generated diagram PDFs. A successful base64 PDF is decoded into the same `CompileResult` byte artifact used by the existing Typr PDF preview; no separate preview is introduced. The build log identifies the engine as `companion` and includes the native compiler log.
 

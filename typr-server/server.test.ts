@@ -47,6 +47,22 @@ describe("typr-server Companion API", () => {
     }
   );
 
+  it("opts an allowed Typr origin into private-network preflights", async () => {
+    const baseUrl = await startServer(createTyprServer({ isPdflatexAvailable: async () => true }));
+    const response = await fetch(`${baseUrl}/api/v1/status`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://typr.ca",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Private-Network": "true"
+      }
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://typr.ca");
+    expect(response.headers.get("access-control-allow-private-network")).toBe("true");
+  });
+
   it("rejects malformed compile payloads", async () => {
     const baseUrl = await startServer(createTyprServer());
     const response = await postJson(baseUrl, { protocolVersion: 1 });

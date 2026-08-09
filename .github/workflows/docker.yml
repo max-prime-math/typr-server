@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/typr-server
+  GHCR_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/typr-server
 
 jobs:
   source-checks:
@@ -33,6 +33,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate Unraid template
+        run: python -c "import xml.etree.ElementTree as ET; ET.parse('unraid/typr-companion.xml')"
 
       - name: Typecheck
         run: npm run typecheck
@@ -76,7 +79,7 @@ jobs:
         id: build-metadata
         shell: bash
         run: |
-          version="0.1.0-dev.${GITHUB_SHA::12}"
+          version="0.1.1-dev.${GITHUB_SHA::12}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
           fi
@@ -170,11 +173,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: vars.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Generate image tags and labels
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: |
+            name=${{ env.GHCR_IMAGE_NAME }}
+            name=${{ vars.DOCKERHUB_USERNAME || 'dockerhub-disabled' }}/typr-server,enable=${{ vars.DOCKERHUB_USERNAME != '' }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -214,7 +226,11 @@ jobs:
           sbom: true
 
       - name: Inspect published manifest
-        run: docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.release.outputs.version }}"
+        run: docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${{ steps.release.outputs.version }}"
+
+      - name: Inspect Docker Hub manifest
+        if: vars.DOCKERHUB_USERNAME != ''
+        run: docker buildx imagetools inspect "${{ vars.DOCKERHUB_USERNAME }}/typr-server:${{ steps.release.outputs.version }}"
 
   verify-published:
     name: Verify published image (${{ matrix.platform }})
@@ -246,11 +262,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull published architecture
-        run: docker pull --platform "${{ matrix.platform }}" "${IMAGE_NAME}:${{ needs.publish.outputs.version }}"
+        run: docker pull --platform "${{ matrix.platform }}" "${GHCR_IMAGE_NAME}:${{ needs.publish.outputs.version }}"
 
       - name: Verify status, packaged version, and conventional compile
         env:
-          TYPR_COMPANION_DOCKER_IMAGE: ${{ env.IMAGE_NAME }}:${{ needs.publish.outputs.version }}
+          TYPR_COMPANION_DOCKER_IMAGE: ${{ env.GHCR_IMAGE_NAME }}:${{ needs.publish.outputs.version }}
           TYPR_COMPANION_DOCKER_SKIP_BUILD: "1"
           TYPR_COMPANION_EXPECTED_VERSION: ${{ needs.publish.outputs.version }}
         run: npm run test:companion:docker

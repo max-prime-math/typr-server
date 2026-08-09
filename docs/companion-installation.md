@@ -39,6 +39,8 @@ The image allows the official Stable, Beta, and Development Typr origins plus th
 
 No environment variable or volume is required for the official Typr PWA. The server uses temporary per-request/per-session directories and removes them; there is currently no safe, meaningful cache directory to persist and user projects are never mounted or stored.
 
+Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from the hosted HTTPS PWA because browsers block mixed content. Chromium browsers may also request Local Network Access permission; allow it for Typr when intentionally connecting to your Companion.
+
 ### Docker Compose
 
 The repository's [`compose.yaml`](../compose.yaml) uses the published stable image, loopback binding, restart policy, and `no-new-privileges` hardening. Download that one file or copy it into an otherwise empty directory, then run:
@@ -94,13 +96,13 @@ There is no self-updater inside the Companion and the PWA cannot mutate Docker. 
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.0
+ghcr.io/max-prime-math/typr-server:0.1.1
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.0
+image: ghcr.io/max-prime-math/typr-server:0.1.1
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.
@@ -137,7 +139,7 @@ There is no Companion cache volume to remove and uninstalling the container does
 - **Linux:** use Docker Engine. Native amd64 is the primary current development/runtime environment.
 - **Windows:** use Docker Desktop with the WSL2 backend. The image is Linux-based; no native Windows TeX setup is needed.
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
-- **Unraid:** use repository `ghcr.io/max-prime-math/typr-server`, tag `latest` or a pinned release, container port 8484, and host port 8484. No volume or required environment variable is needed. The default Typr URL points to the browser device's own loopback, so a Companion on a separate Unraid host would require LAN exposure; that is outside the current unauthenticated trusted-local security model and is not recommended. amd64 is covered by the image workflow; no Community Applications template is currently provided.
+- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). No volume is needed. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. The service is unauthenticated and must not be exposed publicly.
 
 The GitHub workflow is configured to build and run the complete backend Docker suite natively on GitHub-hosted amd64 and arm64 runners. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
 

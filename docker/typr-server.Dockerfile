@@ -5,7 +5,7 @@
 ARG NODE_IMAGE=node:22.23.2-bookworm-slim
 ARG TEXPRESSO_REV=e8df7709077b2f86f6e16e6c86ceefb86de06f8d
 ARG WS_VERSION=8.21.3
-ARG COMPANION_VERSION=0.1.0-dev
+ARG COMPANION_VERSION=0.1.1-dev
 ARG IMAGE_SOURCE=https://github.com/max-prime-math/typr
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown

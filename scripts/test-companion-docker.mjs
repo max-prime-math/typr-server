@@ -47,6 +47,20 @@ try {
     "The production image must allow the official Typr origin without wildcard CORS."
   );
 
+  const privateNetworkPreflight = await fetch(`${baseUrl}/api/v1/status`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://typr.ca",
+      "Access-Control-Request-Method": "GET",
+      "Access-Control-Request-Private-Network": "true"
+    }
+  });
+  assert(privateNetworkPreflight.status === 204, "The private-network preflight must succeed.");
+  assert(
+    privateNetworkPreflight.headers.get("access-control-allow-private-network") === "true",
+    "The production image must opt allowed Typr origins into private-network requests."
+  );
+
   const simpleResult = await compile(baseUrl, [
     textFile("main.tex", "\\documentclass{article}\n\\begin{document}\nHello from Docker.\n\\end{document}\n")
   ]);
