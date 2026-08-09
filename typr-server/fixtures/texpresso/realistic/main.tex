@@ -1,0 +1,21 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{tikz}
+\title{TeXpresso persistent-session benchmark}
+\author{Typr Companion POC}
+\begin{document}
+\maketitle
+\tableofcontents
+\input{sections/introduction.tex}
+\input{sections/method.tex}
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}
+    \draw[->] (0,0) -- (3,0) node[right] {incremental edit};
+    \draw[->] (0,0) -- (0,1.5) node[above] {rendered state};
+  \end{tikzpicture}
+  \caption{A deterministic local diagram.}
+\end{figure}
+\end{document}

@@ -1,0 +1,284 @@
+diff --git a/src/frontend/editor.c b/src/frontend/editor.c
+index 6face98..e5b0088 100644
+--- a/src/frontend/editor.c
++++ b/src/frontend/editor.c
+@@ -320,6 +320,28 @@ bool editor_parse(fz_context *ctx,
+       goto arity;
+     *out = (struct editor_command){.tag = EDIT_RERUN_ONCE, .rerun_once = {}};
+   }
++  else if (strcmp(verb, "render-page") == 0)
++  {
++    if (len != 3)
++      goto arity;
++    val page = val_array_get(ctx, stack, command, 1);
++    val dpi = val_array_get(ctx, stack, command, 2);
++    if (!val_is_number(page) || !val_is_number(dpi))
++      goto arguments;
++    *out = (struct editor_command){
++        .tag = EDIT_RENDER_PAGE,
++        .render_page = {
++            .page = val_number(ctx, page),
++            .dpi = val_number(ctx, dpi),
++        },
++    };
++  }
++  else if (strcmp(verb, "page-count") == 0)
++  {
++    if (len != 1)
++      goto arity;
++    *out = (struct editor_command){.tag = EDIT_PAGE_COUNT, .page_count = {}};
++  }
+   else
+   {
+     fprintf(stderr, "[command] unknown verb: %s\n", verb);
+@@ -666,3 +688,59 @@ void editor_notify_lookup(const char *path,
+     case EDITOR_JSON: fprintf(stdout, "\"]\n"); break;
+   }
+ }
++
++static void output_base64(FILE *f, const unsigned char *data, int len)
++{
++  static const char table[] =
++      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++  for (int i = 0; i < len; i += 3)
++  {
++    int remain = len - i;
++    unsigned value = (unsigned)data[i] << 16;
++    if (remain > 1) value |= (unsigned)data[i + 1] << 8;
++    if (remain > 2) value |= data[i + 2];
++    putc_unlocked(table[(value >> 18) & 63], f);
++    putc_unlocked(table[(value >> 12) & 63], f);
++    putc_unlocked(remain > 1 ? table[(value >> 6) & 63] : '=', f);
++    putc_unlocked(remain > 2 ? table[value & 63] : '=', f);
++  }
++}
++
++void editor_page_image(int page, int width, int height,
++                       const unsigned char *data, int len)
++{
++  switch (protocol)
++  {
++    case EDITOR_SEXP:
++      fprintf(stdout, "(page-image %d %d %d \"image/png\" \"", page, width, height);
++      break;
++    case EDITOR_JSON:
++      fprintf(stdout, "[\"page-image\", %d, %d, %d, \"image/png\", \"", page, width, height);
++      break;
++  }
++  output_base64(stdout, data, len);
++  fprintf(stdout, protocol == EDITOR_SEXP ? "\")\n" : "\"]\n");
++  fflush(stdout);
++}
++
++void editor_page_count(int count)
++{
++  switch (protocol)
++  {
++    case EDITOR_SEXP: fprintf(stdout, "(page-count %d)\n", count); break;
++    case EDITOR_JSON: fprintf(stdout, "[\"page-count\", %d]\n", count); break;
++  }
++  fflush(stdout);
++}
++
++void editor_page_error(int page, const char *message)
++{
++  switch (protocol)
++  {
++    case EDITOR_SEXP: fprintf(stdout, "(page-image-error %d \"", page); break;
++    case EDITOR_JSON: fprintf(stdout, "[\"page-image-error\", %d, \"", page); break;
++  }
++  output_data_string(stdout, message, strlen(message));
++  fprintf(stdout, protocol == EDITOR_SEXP ? "\")\n" : "\"]\n");
++  fflush(stdout);
++}
+diff --git a/src/frontend/editor.h b/src/frontend/editor.h
+index 05fdd1c..e5b84df 100644
+--- a/src/frontend/editor.h
++++ b/src/frontend/editor.h
+@@ -37,4 +37,6 @@ enum EDITOR_COMMAND
+   EDIT_RESUME,
+   EDIT_RERUN,
+   EDIT_RERUN_ONCE,
++  EDIT_RENDER_PAGE,
++  EDIT_PAGE_COUNT,
+ };
+@@ -136,5 +138,13 @@ struct editor_command
+ 
+     struct {
+     } rerun_once;
++
++    struct {
++      int page;
++      int dpi;
++    } render_page;
++
++    struct {
++    } page_count;
+   };
+ };
+@@ -158,6 +168,11 @@ void editor_flush(void);
+ void editor_synctex(const char *dirname, const char *basename, int basename_len, int line, int column);
+ void editor_reset_sync(void);
+ void editor_notify_file_opened(int index, const char *path, int len);
++/* Experimental transport-neutral raster export used by Typr's local POC. */
++void editor_page_image(int page, int width, int height,
++                       const unsigned char *data, int len);
++void editor_page_count(int count);
++void editor_page_error(int page, const char *message);
+ 
+ enum EDITOR_LOOKUP_STATUS
+ {
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index c202294..7f7b061 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -106,6 +106,8 @@ typedef struct {
+   SDL_Window *window;
+ 
+   int page;
++  int pending_render_page;
++  int pending_render_dpi;
+   int need_synctex;
+   int zoom;
+ 
+@@ -925,5 +925,96 @@ static void display_page(struct persistent_state *ps, ui_state *ui)
+   schedule_event(RENDER_EVENT);
+ }
++
++/*
++ * This is intentionally separate from txp_renderer_render: it reuses the
++ * engine's current page display-list, but writes a browser-native PNG rather
++ * than uploading pixels to SDL.  It is a tiny experimental editor-protocol
++ * extension for Typr's local render POC, not a stable upstream protocol.
++ */
++static void export_page_png(struct persistent_state *ps, ui_state *ui,
++                            int page, int dpi)
++{
++  if (page < 0 || page >= send(page_count, ui->eng))
++  {
++    editor_page_error(page, "page is not available in the current document state");
++    return;
++  }
++  if (dpi < 36 || dpi > 300)
++  {
++    editor_page_error(page, "dpi must be between 36 and 300");
++    return;
++  }
++
++  fz_display_list *dl = NULL;
++  fz_pixmap *pixmap = NULL;
++  fz_device *device = NULL;
++  fz_buffer *png = NULL;
++  fz_output *output = NULL;
++  fz_var(dl);
++  fz_var(pixmap);
++  fz_var(device);
++  fz_var(png);
++  fz_var(output);
++
++  fz_try(ps->ctx)
++  {
++    dl = send(render_page, ui->eng, ps->ctx, page);
++    fz_rect bounds = fz_bound_display_list(ps->ctx, dl);
++    fz_matrix ctm = fz_scale((float)dpi / 72.0f, (float)dpi / 72.0f);
++    fz_irect bbox = fz_round_rect(fz_transform_rect(bounds, ctm));
++    pixmap = fz_new_pixmap_with_bbox(ps->ctx, fz_device_rgb(ps->ctx), bbox, NULL, 0);
++    fz_clear_pixmap_with_value(ps->ctx, pixmap, 255);
++    device = fz_new_draw_device(ps->ctx, ctm, pixmap);
++    fz_run_display_list(ps->ctx, dl, device, fz_identity, bounds, NULL);
++    fz_close_device(ps->ctx, device);
++    fz_drop_device(ps->ctx, device);
++    device = NULL;
++
++    png = fz_new_buffer(ps->ctx, 0);
++    output = fz_new_output_with_buffer(ps->ctx, png);
++    fz_write_pixmap_as_png(ps->ctx, output, pixmap);
++    fz_close_output(ps->ctx, output);
++    fz_drop_output(ps->ctx, output);
++    output = NULL;
++
++    unsigned char *data;
++    size_t len = fz_buffer_storage(ps->ctx, png, &data);
++    editor_page_image(page, fz_pixmap_width(ps->ctx, pixmap),
++                      fz_pixmap_height(ps->ctx, pixmap), data, (int)len);
++  }
++  fz_always(ps->ctx)
++  {
++    if (output) fz_drop_output(ps->ctx, output);
++    if (device) fz_drop_device(ps->ctx, device);
++    if (png) fz_drop_buffer(ps->ctx, png);
++    if (pixmap) fz_drop_pixmap(ps->ctx, pixmap);
++    if (dl) fz_drop_display_list(ps->ctx, dl);
++  }
++  fz_catch(ps->ctx)
++  {
++    editor_page_error(page, fz_caught_message(ps->ctx));
++  }
++}
++
++static void request_page_export(struct persistent_state *ps, ui_state *ui,
++                                int page, int dpi)
++{
++  if (page < 0 || dpi < 36 || dpi > 300)
++  {
++    editor_page_error(page, "page or dpi is outside the supported export range");
++    return;
++  }
++  if (page < send(page_count, ui->eng))
++  {
++    export_page_png(ps, ui, page, dpi);
++    return;
++  }
++  /* TeXpresso incrementally discovers pages only as the viewer reaches them. */
++  ui->page = page;
++  ui->pending_render_page = page;
++  ui->pending_render_dpi = dpi;
++  schedule_event(RELOAD_EVENT);
++}
+ 
+ #if !SDL_VERSION_ATLEAST(2, 0, 16)
+ static void
+@@ -1134,5 +1205,13 @@ static void interpret_command(struct persistent_state *ps,
+       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
+       schedule_event(SCAN_EVENT);
+       break;
++
++    case EDIT_RENDER_PAGE:
++      request_page_export(ps, ui, cmd.render_page.page, cmd.render_page.dpi);
++      break;
++
++    case EDIT_PAGE_COUNT:
++      editor_page_count(send(page_count, ui->eng));
++      break;
+   }
+ }
+@@ -1255,6 +1356,8 @@ bool texpresso_main(struct persistent_state *ps)
+   else
+   {
+     ui->page = 0;
++    ui->pending_render_page = -1;
++    ui->pending_render_dpi = 0;
+     ui->zoom = 0;
+     ui->need_synctex = 1;
+   }
+@@ -1351,5 +1454,20 @@ bool texpresso_main(struct persistent_state *ps)
+       int after_page_count = send(page_count, ui->eng);
+       fflush(stdout);
+ 
++      if (ui->pending_render_page >= 0 && after_page_count > ui->pending_render_page)
++      {
++        int page = ui->pending_render_page;
++        int dpi = ui->pending_render_dpi;
++        ui->pending_render_page = -1;
++        export_page_png(ps, ui, page, dpi);
++      }
++      else if (ui->pending_render_page >= 0 &&
++               send(get_status, ui->eng) == DOC_TERMINATED)
++      {
++        int page = ui->pending_render_page;
++        ui->pending_render_page = -1;
++        editor_page_error(page, "page is beyond the end of the document");
++      }
++
+       if (ui->page >= before_page_count && ui->page < after_page_count)
+         schedule_event(RELOAD_EVENT);

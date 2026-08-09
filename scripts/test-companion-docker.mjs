@@ -1,0 +1,192 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const image = process.env.TYPR_COMPANION_DOCKER_IMAGE ?? "typr-server:test";
+const skipBuild = process.env.TYPR_COMPANION_DOCKER_SKIP_BUILD === "1";
+const expectedVersion = process.env.TYPR_COMPANION_EXPECTED_VERSION;
+let containerId;
+
+try {
+  if (!skipBuild) {
+    await run("docker", [
+      "build",
+      "--file", "docker/typr-server.Dockerfile",
+      "--tag", image,
+      "."
+    ]);
+  }
+
+  containerId = (await capture("docker", [
+    "run",
+    "--detach",
+    "--rm",
+    "--publish", "127.0.0.1::8484",
+    image
+  ])).trim();
+
+  const portOutput = await capture("docker", ["port", containerId, "8484/tcp"]);
+  const port = parsePublishedPort(portOutput);
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const status = await waitForStatus(baseUrl);
+  assert(status.protocolVersion === 1, "Docker Companion must report protocol version 1.");
+  if (expectedVersion) {
+    assert(status.serverVersion === expectedVersion,
+      `Docker Companion must report server version ${expectedVersion}; received ${status.serverVersion}.`);
+  }
+  assert(status.capabilities?.compile?.engines?.includes("pdflatex"), "Docker Companion must advertise pdflatex.");
+
+  const officialOriginResponse = await fetch(`${baseUrl}/api/v1/status`, {
+    headers: { Origin: "https://typr.ca" }
+  });
+  assert(officialOriginResponse.ok, "The status endpoint must respond to the official Typr origin.");
+  assert(
+    officialOriginResponse.headers.get("access-control-allow-origin") === "https://typr.ca",
+    "The production image must allow the official Typr origin without wildcard CORS."
+  );
+
+  const simpleResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\nHello from Docker.\n\\end{document}\n")
+  ]);
+  assertPdf(simpleResult, "a simple LaTeX document");
+
+  const multiFileResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapters/intro}\n\\end{document}\n"),
+    textFile("chapters/intro.tex", "Hello from a nested file.\n")
+  ]);
+  assertPdf(multiFileResult, "a multi-file LaTeX document");
+
+  const assetResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{images/example.png}\n\\end{document}\n"),
+    {
+      path: "images/example.png",
+      kind: "binary",
+      encoding: "base64",
+      // A valid, one-pixel PNG fixture.
+      content: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAACYktHRAAB3YoTpAAAAAd0SU1FB+oICBMKBG0twNAAAAAldEVYdGRhdGU6Y3JlYXRlADIwMjYtMDgtMDhUMTk6MTA6MDQrMDA6MDArhK71AAAAJXRFWHRkYXRlOm1vZGlmeQAyMDI2LTA4LTA4VDE5OjEwOjA0KzAwOjAwWtkWSQAAACh0RVh0ZGF0ZTp0aW1lc3RhbXAAMjAyNi0wOC0wOFQxOToxMDowNCswMDowMA3MN5YAAAAKSURBVAjXY2gAAACCAIHdQ2r0AAAAAElFTkSuQmCC"
+    }
+  ]);
+  assertPdf(assetResult, "a LaTeX document with a binary image asset");
+
+  const brokenResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\definitelyNotALatexCommand\n\\end{document}\n")
+  ]);
+  assert(
+    brokenResult.ok === false && brokenResult.errors?.[0]?.code === "latex-compile-failed",
+    "Broken LaTeX must return a typed latex-compile-failed result."
+  );
+
+  const traversalResponse = await requestCompile(baseUrl, {
+    protocolVersion: 1,
+    engine: "pdflatex",
+    mainFilePath: "main.tex",
+    files: [textFile("../outside.tex", "not allowed")]
+  });
+  assert(traversalResponse.status === 400, "Traversal paths must be rejected with HTTP 400.");
+
+  console.log("Docker Companion verification passed.");
+} finally {
+  if (containerId) {
+    await run("docker", ["stop", "--timeout", "10", containerId], { allowFailure: true });
+  }
+}
+
+function textFile(path, content) {
+  return { path, kind: "text", content };
+}
+
+async function compile(baseUrl, files) {
+  const response = await requestCompile(baseUrl, {
+    protocolVersion: 1,
+    engine: "pdflatex",
+    mainFilePath: "main.tex",
+    files
+  });
+  assert(response.status === 200, `Compile request returned HTTP ${response.status}.`);
+  return response.body;
+}
+
+async function requestCompile(baseUrl, body) {
+  const response = await fetch(`${baseUrl}/api/v1/compile`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+async function waitForStatus(baseUrl) {
+  const deadline = Date.now() + 30_000;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/status`);
+      if (response.ok) {
+        return await response.json();
+      }
+      lastError = new Error(`Status endpoint returned HTTP ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+  }
+  throw new Error(`Docker Companion did not become ready: ${lastError?.message ?? "unknown error"}`);
+}
+
+function parsePublishedPort(output) {
+  const match = output.match(/:(\d+)\s*$/m);
+  if (!match) {
+    throw new Error(`Could not determine the published Docker port from: ${output}`);
+  }
+  return Number.parseInt(match[1], 10);
+}
+
+function assertPdf(result, description) {
+  assert(
+    result.ok === true,
+    `Expected ${description} to compile successfully: ${JSON.stringify(result.errors ?? result)}`
+  );
+  assert(
+    Buffer.from(result.output?.content ?? "", "base64").subarray(0, 4).toString() === "%PDF",
+    `Expected ${description} to produce a PDF.`
+  );
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function run(command, args, { allowFailure = false } = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { cwd: repositoryRoot, stdio: "inherit" });
+    child.once("error", rejectRun);
+    child.once("close", (code) => {
+      if (code === 0 || allowFailure) {
+        resolveRun();
+      } else {
+        rejectRun(new Error(`${command} ${args.join(" ")} exited with status ${code}.`));
+      }
+    });
+  });
+}
+
+function capture(command, args) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { cwd: repositoryRoot, stdio: ["ignore", "pipe", "inherit"] });
+    let output = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.once("error", rejectRun);
+    child.once("close", (code) => {
+      if (code === 0) {
+        resolveRun(output);
+      } else {
+        rejectRun(new Error(`${command} ${args.join(" ")} exited with status ${code}.`));
+      }
+    });
+  });
+}

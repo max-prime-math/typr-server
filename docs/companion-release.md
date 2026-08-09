@@ -1,0 +1,79 @@
+---
+title: Release Typr Companion
+---
+
+# Release Typr Companion
+
+This is the maintainer workflow for `ghcr.io/max-prime-math/typr-server`. It is deliberately independent from the PWA's Development → Beta → Stable branch promotions.
+
+## Independent versions
+
+Keep these values separate:
+
+- The Typr PWA version is the application/package version.
+- The Companion version is injected into the image from a stable Git tag and returned as `serverVersion`.
+- `TYPR_COMPANION_PROTOCOL_VERSION` controls API compatibility and does not change for an image-only release.
+- The TeXpresso source revision is a separately pinned Docker build argument and OCI label.
+
+Matching numbers are allowed but do not make these values the same version stream. Do not edit `/api/v1` or increment the protocol merely to publish a container update.
+
+## CI and publish boundary
+
+`.github/workflows/docker.yml` runs on pull requests, pushes to the release-channel branches, matching version tags, and manual dispatches. A source job typechecks, runs the complete unit suite, and builds the production frontend. Its architecture matrix then builds and runs the same existing Docker harnesses for:
+
+- `linux/amd64` natively on the GitHub-hosted amd64 runner;
+- `linux/arm64` through QEMU on that runner.
+
+Both jobs verify container startup/status, simple and multi-file pdfLaTeX, a binary image asset, typed invalid-LaTeX failure, path rejection, persistent TeXpresso execution, raster page export, and the full WebSocket live-preview lifecycle. The browser frontend E2E suite is not repeated inside each architecture job: the transport harness already exercises the architecture-sensitive container backend, while frontend behavior remains covered by the normal unit/build and focused frontend E2E workflows.
+
+Pull requests, branch pushes, and manual dispatches never log into GHCR and never publish. The publish job requires both architecture test jobs and a Git ref beginning with `refs/tags/v`; it then validates the stricter exact form `vMAJOR.MINOR.PATCH`. A malformed tag fails before registry login/push.
+
+## Stable tags
+
+Tag `v0.1.0` publishes:
+
+```text
+ghcr.io/max-prime-math/typr-server:0.1.0
+ghcr.io/max-prime-math/typr-server:0.1
+ghcr.io/max-prime-math/typr-server:0
+ghcr.io/max-prime-math/typr-server:latest
+ghcr.io/max-prime-math/typr-server:sha-<short-sha>
+```
+
+`latest` is created only in the guarded stable tag job. It is never published from `dev`, `development`, `beta`, `main`, pull requests, or manual runs.
+
+After the manifest is pushed, two clean jobs pull the versioned image by target platform and rerun status/version and conventional compile checks against the published artifact. This checks the registry manifest rather than only the pre-publish BuildKit result.
+
+## Create a release
+
+First ensure the chosen commit has passed the Docker workflow and the normal application tests. From a clean checkout of that exact commit:
+
+```bash
+git tag -a v0.1.0 -m "Typr Companion v0.1.0"
+git push origin v0.1.0
+```
+
+Pushing the tag is the publication trigger. Do not create or push it until a public GHCR release is intended. If the workflow fails before publish, fix the cause and use a new version tag rather than moving a tag that users may already have resolved.
+
+## Permissions and metadata
+
+The workflow defaults to `contents: read`. Only the publish job receives `packages: write`; published-image verification uses `packages: read`. Authentication is GitHub's built-in `GITHUB_TOKEN`; no personal token or repository credential is committed.
+
+Release images contain OCI source, documentation, version, Git revision, commit-date build timestamp, and AGPL license labels. Typr-specific labels record Companion protocol version and the pinned TeXpresso commit. Buildx also publishes standard provenance and SBOM attestations.
+
+## Build cache and reproducibility
+
+BuildKit's GitHub Actions cache uses one scope per architecture. The release build imports both scopes, so unchanged TeX Live, native TeXpresso, and runtime dependency layers can be reused while source-only changes recopy the small server layer. Cache hits never replace Dockerfile inputs or skip tests.
+
+The Node base tag, TeXpresso commit, and exact `ws` package (including registry integrity) are pinned. Debian packages are intentionally resolved from the selected Bookworm image repositories and the multi-architecture base is version-tagged rather than digest-pinned. Therefore release digests, not later source rebuilds, are the reproducible rollback boundary.
+
+## Architecture evidence
+
+Treat these states precisely in release notes:
+
+- A successful Buildx build is **built successfully**.
+- The amd64 matrix runtime suite on `ubuntu-latest` is **tested natively**.
+- The arm64 matrix runtime suite after QEMU setup is **tested under emulation**.
+- Only execution on a real arm64 host is **tested natively on arm64**.
+
+Do not describe arm64 as runtime-verified until its matrix suite completes. If an architecture fails, the `needs: test-image` dependency blocks the entire manifest; never remove the failing platform and silently publish a partial release.

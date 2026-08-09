@@ -1,0 +1,10 @@
+services:
+  typr-server:
+    image: ghcr.io/max-prime-math/typr-server:latest
+    container_name: typr-server
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # Keep the unauthenticated Companion private to this machine.
+      - "127.0.0.1:8484:8484"

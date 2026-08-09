@@ -1,0 +1,9 @@
+services:
+  typr-server:
+    build:
+      context: .
+      dockerfile: docker/typr-server.Dockerfile
+      target: runtime
+    image: typr-server:dev
+    ports:
+      - "127.0.0.1:8484:8484"

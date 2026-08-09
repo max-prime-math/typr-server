@@ -1,0 +1,25 @@
+# Use a small, explicit Docker context. The Companion needs only its server
+# sources and the shared protocol; its runtime has no npm dependencies.
+# These explicit entries also protect against Docker implementations with
+# different glob behavior for hidden development directories.
+.git
+.agents
+.codex
+node_modules
+dist
+coverage
+.vite
+test-results
+qa-ui-artifacts
+*.log
+*.pdf
+
+**
+!typr-server/
+!typr-server/**
+!src/
+src/*
+!src/companion-protocol/
+!src/companion-protocol/**
+!docker/
+!docker/**
