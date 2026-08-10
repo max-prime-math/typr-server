@@ -7,6 +7,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_TEXPRESSO_RENDER_DPI,
+  MAX_TEXPRESSO_RENDER_DPI,
   TexpressoSession,
   type TexpressoTextFile
 } from "./texpressoSession.ts";
@@ -55,13 +56,13 @@ async function main(): Promise<void> {
 
     const baselineDpi = 144;
     const preferredDpi = DEFAULT_TEXPRESSO_RENDER_DPI;
-    const higherDpi = 240;
+    const higherDpi = MAX_TEXPRESSO_RENDER_DPI;
     const baseline = await renderAll(session, initialPageCount, baselineDpi, destination, "initial-144");
-    const preferred = await renderAll(session, initialPageCount, preferredDpi, destination, "initial-192");
-    const higher = await renderAll(session, initialPageCount, higherDpi, destination, "initial-240");
+    const preferred = await renderAll(session, initialPageCount, preferredDpi, destination, `initial-${preferredDpi}`);
+    const higher = await renderAll(session, initialPageCount, higherDpi, destination, `initial-${higherDpi}`);
     printResolution("144 DPI", baseline);
-    printResolution("192 DPI", preferred);
-    printResolution("240 DPI", higher);
+    printResolution(`${preferredDpi} DPI`, preferred);
+    printResolution(`${higherDpi} DPI`, higher);
 
     const initialPid = session.pid;
     const firstDigest = digest((await session.renderPage(0, preferredDpi)).data);

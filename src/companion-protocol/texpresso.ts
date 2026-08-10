@@ -4,7 +4,7 @@ import type { ProjectFile } from "./index.ts";
 export const TEXPRESSO_WS_PROTOCOL_VERSION = 1;
 export const TEXPRESSO_WS_ROUTE = "/ws/texpresso";
 
-export const DEFAULT_TEXPRESSO_RENDER_DPI = 192;
+export const DEFAULT_TEXPRESSO_RENDER_DPI = 240;
 export const MIN_TEXPRESSO_RENDER_DPI = 72;
 export const MAX_TEXPRESSO_RENDER_DPI = 300;
 

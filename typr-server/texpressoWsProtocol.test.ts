@@ -11,7 +11,7 @@ describe("private TeXpresso WebSocket protocol", () => {
     expect(TEXPRESSO_WS_PROTOCOL_VERSION).toBe(1);
     expect(TEXPRESSO_WS_ROUTE).toBe("/ws/texpresso");
     expect(TEXPRESSO_WS_ROUTE.startsWith("/api/v1")).toBe(false);
-    expect(TEXPRESSO_WS_LIMITS.defaultDpi).toBe(192);
+    expect(TEXPRESSO_WS_LIMITS.defaultDpi).toBe(240);
   });
 
   it("accepts nested text files, binary assets, and a session DPI", () => {
