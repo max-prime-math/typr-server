@@ -8,11 +8,11 @@ import {
   realpath,
   rename,
   rm,
-  rmdir,
+  type FileHandle,
   unlink
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type {
   WorkspaceFileListResponse,
   WorkspaceFileMetadata,
@@ -51,6 +51,8 @@ export class WorkspaceError extends Error {
 export interface WorkspaceStoreOptions {
   workspaceId?: string;
   limits?: WorkspaceLimits;
+  /** Test seam for proving cleanup at each fallible atomic-write stage. */
+  atomicWriteHook?: (step: "write" | "sync" | "rename") => void | Promise<void>;
 }
 
 export type WorkspaceWritePrecondition =
@@ -70,9 +72,11 @@ export class WorkspaceStore {
     this.root = root;
     this.workspaceId = validateWorkspaceId(options.workspaceId ?? "default");
     this.limits = Object.freeze({ ...(options.limits ?? DEFAULT_WORKSPACE_LIMITS) });
+    this.atomicWriteHook = options.atomicWriteHook;
   }
 
   private readonly root: string;
+  private readonly atomicWriteHook: WorkspaceStoreOptions["atomicWriteHook"];
 
   static async open(root: string, options: WorkspaceStoreOptions = {}): Promise<WorkspaceStore> {
     if (!isAbsolute(root) || root.includes("\\") || resolve(root) === resolve("/")) {
@@ -150,22 +154,26 @@ export class WorkspaceStore {
 
       const destination = await this.resolveForWrite(normalized);
       const temporary = join(destination.parent, `${INTERNAL_WRITE_PREFIX}${randomUUID()}`);
-      const handle = await openFile(
-        temporary,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        existing?.mode ?? 0o600
-      );
+      let handle: FileHandle | undefined;
+      let replaced = false;
       try {
+        handle = await openFile(
+          temporary,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+          existing?.mode ?? 0o600
+        );
+        await this.atomicWriteHook?.("write");
         await handle.writeFile(content);
+        await this.atomicWriteHook?.("sync");
         await handle.sync();
-      } finally {
         await handle.close();
-      }
-      try {
+        handle = undefined;
+        await this.atomicWriteHook?.("rename");
         await rename(temporary, destination.path);
-      } catch (error) {
-        await rm(temporary, { force: true });
-        throw error;
+        replaced = true;
+      } finally {
+        await handle?.close().catch(() => undefined);
+        if (!replaced) await rm(temporary, { force: true }).catch(() => undefined);
       }
       const result = await this.read(normalized);
       return metadataOnly(result);
@@ -181,7 +189,6 @@ export class WorkspaceStore {
       }
       const filePath = await this.resolveExistingFile(normalized);
       await unlink(filePath);
-      await this.removeEmptyParents(filePath);
     });
   }
 
@@ -296,18 +303,6 @@ export class WorkspaceStore {
   private assertRegularFile(info: { isFile(): boolean }, path: string): void {
     if (!info.isFile()) {
       throw new WorkspaceError(409, "workspace-unsafe-entry", `Workspace path is not a regular file: ${path}`);
-    }
-  }
-
-  private async removeEmptyParents(filePath: string): Promise<void> {
-    let parent = resolve(filePath, "..");
-    while (parent !== this.root && relative(this.root, parent) && !relative(this.root, parent).startsWith("..")) {
-      try {
-        await rmdir(parent);
-      } catch {
-        return;
-      }
-      parent = resolve(parent, "..");
     }
   }
 

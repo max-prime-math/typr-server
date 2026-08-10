@@ -70,6 +70,39 @@ describe("typr-server Companion API", () => {
     expect(response.headers.get("access-control-allow-private-network")).toBe("true");
   });
 
+  it("keeps CORS preflights route- and method-scoped", async () => {
+    const baseUrl = await startServer(createTyprServer({ workspace: await createWorkspace() }));
+    const headers = {
+      Origin: "https://typr.ca",
+      "Access-Control-Request-Method": "PUT",
+      "Access-Control-Request-Headers": `content-type, if-none-match, ${TYPR_WORKSPACE_MUTATION_HEADER}`
+    };
+    const allowed = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`, {
+      method: "OPTIONS",
+      headers
+    });
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get("access-control-allow-methods")).toBe("GET, PUT, DELETE, OPTIONS");
+
+    const wrongRoute = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.status}`, {
+      method: "OPTIONS",
+      headers
+    });
+    expect(wrongRoute.status).toBe(405);
+
+    const wrongHeader = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`, {
+      method: "OPTIONS",
+      headers: { ...headers, "Access-Control-Request-Headers": "content-type, authorization" }
+    });
+    expect(wrongHeader.status).toBe(400);
+
+    const wrongOrigin = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`, {
+      method: "OPTIONS",
+      headers: { ...headers, Origin: "https://attacker.example" }
+    });
+    expect(wrongOrigin.status).toBe(403);
+  });
+
   it("advertises a configured mapped workspace and its limits", async () => {
     const workspace = await createWorkspace("primary-workspace");
     const baseUrl = await startServer(createTyprServer({

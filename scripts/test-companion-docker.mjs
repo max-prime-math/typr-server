@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,6 +21,8 @@ try {
     ]);
   }
 
+  await assertBrokenSandboxFailsClosed(image);
+
   workspaceRoot = await mkdtemp(resolve(tmpdir(), "typr-companion-docker-workspace-"));
   // CI runner UIDs differ from the image's non-root UID. Make the hostile
   // canary mount intentionally accessible so confinement tests prove the
@@ -32,6 +34,7 @@ try {
     "run",
     "--detach",
     "--rm",
+    "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges:true",
     "--read-only",
     "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
@@ -58,6 +61,12 @@ try {
   assert(status.capabilities?.compile?.engines?.includes("pdflatex"), "Docker Companion must advertise pdflatex.");
   assert(status.capabilities?.filesystem?.projectStorage === true, "Mapped workspace capability must be enabled.");
   assert(status.capabilities?.filesystem?.workspaceId === "docker-test", "Mapped workspace ID must be stable.");
+  const pidOneStatus = await capture("docker", ["exec", containerId, "node", "-e",
+    "process.stdout.write(require('node:fs').readFileSync('/proc/1/status','utf8'))"]);
+  assert(/^CapBnd:\s+0+$/mu.test(pidOneStatus), "Production canaries must run with every Linux capability dropped.");
+  const appPackageExists = await capture("docker", ["exec", containerId, "node", "-e",
+    "process.stdout.write(require('node:fs').existsSync('/app/package.json') ? 'yes' : 'no')"]);
+  assert(appPackageExists === "yes", "The application-tree read canary must target a file present in the production image.");
 
   const officialOriginResponse = await fetch(`${baseUrl}/api/v1/status`, {
     headers: { Origin: "https://typr.ca" }
@@ -127,6 +136,22 @@ try {
   assert(absoluteRead.ok === false, "Native compilation must not read the mapped workspace directly.");
   assert(!JSON.stringify(absoluteRead).includes(readCanary), "Mapped-workspace read canary must not leak through compiler output.");
 
+  const appRead = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{/app/package.json}\n\\end{document}\n")
+  ]);
+  assert(appRead.ok === false, "Native compilation must not read the application tree.");
+  assert(!JSON.stringify(appRead).includes("typr-server-runtime"), "Application source content must not leak through compiler output.");
+
+  const siblingSecret = "TYPR_SIBLING_TMP_SECRET_2d5ed9";
+  await run("docker", ["exec", containerId, "node", "-e",
+    `require('node:fs').writeFileSync('/tmp/typr-sibling-canary.tex', '\\\\typeout{${siblingSecret}}\\n')`]);
+  const siblingRead = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{/tmp/typr-sibling-canary.tex}\n\\end{document}\n")
+  ]);
+  assert(siblingRead.ok === false, "Native compilation must not read unrelated temporary data.");
+  assert(!JSON.stringify(siblingRead).includes(siblingSecret), "Sibling temporary data must not leak through compiler output.");
+  await run("docker", ["exec", containerId, "node", "-e", "require('node:fs').unlinkSync('/tmp/typr-sibling-canary.tex')"]);
+
   await compile(baseUrl, [
     textFile("main.tex", "\\documentclass{article}\n\\newwrite\\outside\n\\begin{document}\n\\immediate\\openout\\outside=/workspace/write-canary\\immediate\\write\\outside{bad}\n\\end{document}\n")
   ]);
@@ -149,7 +174,51 @@ try {
   assert(workspaceListing.ok, "Mapped workspace listing must be available in the production image.");
   const listedFiles = await workspaceListing.json();
   assert(listedFiles.files?.some((file) => file.path === "read-canary.tex"), "Mapped workspace listing must include regular files.");
+
+  const traversalRead = await fetch(`${baseUrl}/api/v1/workspace/file?path=%2e%2e%2Fescape`);
+  assert(traversalRead.status === 400, "Mapped workspace API must reject decoded traversal.");
+  await symlink(resolve(workspaceRoot, "read-canary.tex"), resolve(workspaceRoot, "symlink-canary"));
+  const symlinkRead = await fetch(`${baseUrl}/api/v1/workspace/file?path=symlink-canary`);
+  assert(symlinkRead.status === 409, "Mapped workspace API must reject symlink entries.");
+  await unlink(resolve(workspaceRoot, "symlink-canary"));
+  await run("mkfifo", [resolve(workspaceRoot, "special-canary")]);
+  const specialRead = await fetch(`${baseUrl}/api/v1/workspace/file?path=special-canary`);
+  assert(specialRead.status === 409, "Mapped workspace API must reject special-file entries.");
+  await unlink(resolve(workspaceRoot, "special-canary"));
+
+  const disallowedOrigin = await fetch(`${baseUrl}/api/v1/workspace/file?path=origin-canary`, {
+    method: "PUT",
+    headers: {
+      Origin: "https://attacker.example",
+      "Content-Type": "application/json",
+      "X-Typr-Workspace-Mutation": "1",
+      "If-None-Match": "*"
+    },
+    body: JSON.stringify({ encoding: "base64", content: "bm8=" })
+  });
+  assert(disallowedOrigin.status === 403, "Mapped workspace mutations must reject disallowed browser origins.");
+  const wrongMethodPreflight = await fetch(`${baseUrl}/api/v1/workspace/file?path=origin-canary`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://typr.ca", "Access-Control-Request-Method": "POST" }
+  });
+  assert(wrongMethodPreflight.status === 405, "Workspace CORS preflight must reject unsupported methods.");
+  const wrongHeaderPreflight = await fetch(`${baseUrl}/api/v1/workspace/file?path=origin-canary`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://typr.ca",
+      "Access-Control-Request-Method": "PUT",
+      "Access-Control-Request-Headers": "authorization"
+    }
+  });
+  assert(wrongHeaderPreflight.status === 400, "Workspace CORS preflight must reject unsupported headers.");
+
   const apiFileUrl = `${baseUrl}/api/v1/workspace/file?path=nested%2Fapi-created.bin`;
+  const missingPrecondition = await fetch(apiFileUrl, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-Typr-Workspace-Mutation": "1" },
+    body: JSON.stringify({ encoding: "base64", content: "AA==" })
+  });
+  assert(missingPrecondition.status === 428, "Mapped workspace writes must require a conditional precondition.");
   const apiCreate = await fetch(apiFileUrl, {
     method: "PUT",
     headers: {
@@ -169,11 +238,36 @@ try {
     Buffer.from(apiReadBody.content, "base64").equals(Buffer.from([0, 1, 2, 255])),
     "Mapped workspace API must preserve binary bytes."
   );
+  const staleUpdate = await fetch(apiFileUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Typr-Workspace-Mutation": "1",
+      "If-Match": '"stale"'
+    },
+    body: JSON.stringify({ encoding: "base64", content: "AQ==" })
+  });
+  assert(staleUpdate.status === 412, "Mapped workspace writes must reject stale ETags.");
+
+  const oversized = await fetch(`${baseUrl}/api/v1/workspace/file?path=oversized.bin`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Typr-Workspace-Mutation": "1",
+      "If-None-Match": "*"
+    },
+    body: JSON.stringify({ encoding: "base64", content: Buffer.alloc(16 * 1024 * 1024 + 1).toString("base64") })
+  });
+  assert(oversized.status === 413,
+    `Mapped workspace API must enforce the advertised per-file limit; received ${oversized.status} ${await oversized.text()}.`);
   const apiDelete = await fetch(apiFileUrl, {
     method: "DELETE",
     headers: { "X-Typr-Workspace-Mutation": "1", "If-Match": apiEtag }
   });
   assert(apiDelete.status === 204, "Mapped workspace API must conditionally delete the file it created.");
+  const nestedDirectoryRemains = await capture("docker", ["exec", containerId, "node", "-e",
+    "process.stdout.write(require('node:fs').statSync('/workspace/nested').isDirectory() ? 'yes' : 'no')"]);
+  assert(nestedDirectoryRemains === "yes", "Deleting one workspace file must not prune host directories.");
 
   const timeoutSource = "\\documentclass{article}\n\\begin{document}\n\\newcount\\counter\\counter=0\\loop\\advance\\counter by 1\\ifnum\\counter<2000000000\\repeat\\end{document}\n";
   const timeoutOne = requestCompile(baseUrl, compileRequest([textFile("main.tex", timeoutSource)]));
@@ -221,6 +315,33 @@ async function compile(baseUrl, files) {
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+async function assertBrokenSandboxFailsClosed(imageName) {
+  const id = (await capture("docker", [
+    "create",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
+    imageName
+  ])).trim();
+  try {
+    await run("docker", ["start", id]);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const running = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}}"])) .trim();
+      if (running === "false") break;
+      await delay(100);
+    }
+    const state = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}} {{.State.ExitCode}}"])) .trim();
+    assert(state !== "true 0" && state.startsWith("false "), `A broken native sandbox must fail startup; received ${state}.`);
+    const logs = await captureCombined("docker", ["logs", id]);
+    assert(logs.includes("Native compiler sandbox probe failed"), "Failed startup must identify the native sandbox probe.");
+  } finally {
+    await run("docker", ["rm", "--force", id], { allowFailure: true });
+  }
 }
 
 async function requestCompile(baseUrl, body) {
@@ -302,6 +423,22 @@ function capture(command, args) {
       } else {
         rejectRun(new Error(`${command} ${args.join(" ")} exited with status ${code}.`));
       }
+    });
+  });
+}
+
+function captureCombined(command, args) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.once("error", rejectRun);
+    child.once("close", (code) => {
+      if (code === 0) resolveRun(output);
+      else rejectRun(new Error(`${command} ${args.join(" ")} exited with status ${code}.`));
     });
   });
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ const image = process.env.TYPR_COMPANION_DOCKER_IMAGE ?? "typr-server:texpresso-
 const outputRoot = resolve(repositoryRoot, process.env.TYPR_TEXPRESSO_WS_OUTPUT ?? "qa-ui-artifacts/texpresso-ws");
 let containerId;
 let createdContainerId;
+let workspaceRoot;
 
 async function main() {
  try {
@@ -18,7 +20,25 @@ async function main() {
     await run("docker", ["build", "--file", "docker/typr-server.Dockerfile", "--tag", image, "."]);
   }
   const imageBytes = Number((await capture("docker", ["image", "inspect", image, "--format", "{{.Size}}"])) .trim());
-  containerId = (await capture("docker", ["run", "--detach", "--publish", "127.0.0.1::8484", image])).trim();
+  workspaceRoot = await mkdtemp(join(tmpdir(), "typr-texpresso-workspace-canary-"));
+  await chmod(workspaceRoot, 0o777);
+  const workspaceSecret = "TYPR_TEXPRESSO_WORKSPACE_SECRET_f2d092";
+  await writeFile(join(workspaceRoot, "read-canary.tex"), `\\typeout{${workspaceSecret}}\n`);
+  containerId = (await capture("docker", [
+    "run", "--detach",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--pids-limit", "256",
+    "--memory", "2g",
+    "--cpus", "2",
+    "--mount", `type=bind,src=${workspaceRoot},dst=/workspace`,
+    "--env", "TYPR_COMPANION_WORKSPACE_ROOT=/workspace",
+    "--env", "TYPR_COMPANION_WORKSPACE_ID=texpresso-canary",
+    "--publish", "127.0.0.1::8484",
+    image
+  ])).trim();
   createdContainerId = containerId;
   const port = parsePublishedPort(await capture("docker", ["port", containerId, "8484/tcp"]));
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -27,6 +47,7 @@ async function main() {
   await mkdir(outputRoot, { recursive: true });
 
   await assertRejectedOrigin(wsUrl);
+  await testSandboxReadDenial(wsUrl, workspaceSecret);
   const results = [];
   results.push(await runPreviewScenario(wsUrl, 144, false));
   results.push(await runPreviewScenario(wsUrl, 192, true));
@@ -56,7 +77,22 @@ async function main() {
   } finally {
     if (containerId) await run("docker", ["stop", "--timeout", "15", containerId], { allowFailure: true });
     if (createdContainerId) await run("docker", ["rm", "--force", createdContainerId], { allowFailure: true });
+    if (workspaceRoot) await rm(workspaceRoot, { recursive: true, force: true });
   }
+}
+
+async function testSandboxReadDenial(wsUrl, workspaceSecret) {
+  const client = await PreviewClient.connect(wsUrl, { Origin: "http://localhost:5173" });
+  client.initialize(700, 192, [
+    textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{/workspace/read-canary.tex}\n\\end{document}\n")
+  ]);
+  const terminal = await client.waitForControl((message) =>
+    message.type === "compile-error" || message.type === "session-error" || message.type === "revision-complete",
+  45_000);
+  assert.notEqual(terminal.message.type, "revision-complete", "TeXpresso must not read the mapped workspace.");
+  assert.equal(JSON.stringify(client.controls).includes(workspaceSecret), false, "TeXpresso diagnostics must not leak mapped-workspace contents.");
+  if (!client.closed) client.socket.close();
+  await client.waitForClose();
 }
 
 async function runPreviewScenario(wsUrl, dpi, fullBehavior, editCount = 5) {

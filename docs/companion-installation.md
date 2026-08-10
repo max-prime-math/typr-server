@@ -26,6 +26,7 @@ The direct Docker command is the simplest installation and does not require clon
 docker run -d \
   --name typr-server \
   --restart unless-stopped \
+  --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
@@ -52,7 +53,7 @@ To make one trusted host directory available for explicit manual synchronization
 -e TYPR_COMPANION_WORKSPACE_ID=home-workspace
 ```
 
-The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes one file at a time with ETags. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher. Unmapping the directory disables the capability without affecting browser-local projects.
+The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes or deletes one file at a time with ETags. Deleting a file never prunes its host directories. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher. The host kernel must support Landlock; the container runs a real launcher probe before listening and exits rather than advertising an unusable compiler sandbox. Unmapping the directory disables the capability without affecting browser-local projects.
 
 Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from the hosted HTTPS PWA because browsers block mixed content. Chromium browsers may also request Local Network Access permission; allow it for Typr when intentionally connecting to your Companion.
 
@@ -99,6 +100,7 @@ docker rm typr-server
 docker run -d \
   --name typr-server \
   --restart unless-stopped \
+  --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \

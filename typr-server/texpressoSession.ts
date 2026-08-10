@@ -311,7 +311,10 @@ export class TexpressoSession {
       this.child.once("close", () => {
         clearTimeout(gracefulTimeout);
         if (forceTimeout) clearTimeout(forceTimeout);
-        resolveClose();
+        // The launcher/TeXpresso leader can exit before its XeTeX descendants.
+        // The process-group ID remains signalable after the leader exits.
+        terminateProcessGroup(this.child, "SIGKILL");
+        setTimeout(resolveClose, 50);
       });
       this.child.stdin.end();
     });
@@ -570,11 +573,18 @@ function trimLines(lines: string[]): void {
 }
 
 function terminateProcessGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals = "SIGTERM"): void {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+    } catch {
+      // The group is already gone.
+    }
+    return;
+  }
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
-    else child.kill(signal);
-  } catch {
     child.kill(signal);
+  } catch {
+    // The process is already gone.
   }
 }

@@ -2,6 +2,7 @@ import { createTyprServer, shutdownTyprServer } from "./server.ts";
 import { WorkspaceStore } from "./workspaceStore.ts";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
+import { probeNativeSandbox } from "./sandboxProbe.ts";
 
 const port = parsePort(process.env.TYPR_COMPANION_PORT, 8484);
 const host = process.env.TYPR_COMPANION_HOST ?? "127.0.0.1";
@@ -11,7 +12,10 @@ const sandboxExecutable = process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE?.trim();
 if (workspaceRoot && !sandboxExecutable) {
   throw new Error("A mapped workspace requires TYPR_COMPANION_SANDBOX_EXECUTABLE; refusing to expose it beside unsandboxed native compilers.");
 }
-if (sandboxExecutable) await access(sandboxExecutable, constants.X_OK);
+if (sandboxExecutable) {
+  await access(sandboxExecutable, constants.X_OK);
+  await probeNativeSandbox(sandboxExecutable);
+}
 const workspace = workspaceRoot ? await WorkspaceStore.open(workspaceRoot, {
   workspaceId: process.env.TYPR_COMPANION_WORKSPACE_ID?.trim() || "default"
 }) : undefined;

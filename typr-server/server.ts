@@ -23,6 +23,7 @@ import { TexpressoLiveSession } from "./texpressoLiveSession.ts";
 import { TEXPRESSO_WS_LIMITS, TEXPRESSO_WS_ROUTE } from "./texpressoWsProtocol.ts";
 import { WorkspaceError, type WorkspaceStore } from "./workspaceStore.ts";
 import { NativeProcessError, runNativeProcess, type NativeProcessResult } from "./nativeProcess.ts";
+import { isBase64 } from "./base64.ts";
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
@@ -263,7 +264,7 @@ async function handleRequest(
   context: RequestContext
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
-  applyCorsHeaders(request, response, context.allowedOrigins);
+  applyCorsHeaders(request, response, context.allowedOrigins, url.pathname);
 
   if (isWorkspaceRoute(url.pathname) && request.headers.origin && !context.allowedOrigins.has(request.headers.origin)) {
     sendJson(response, 403, {
@@ -276,6 +277,13 @@ async function handleRequest(
     if (isWorkspaceRoute(url.pathname) && !context.workspace) {
       sendJson(response, 404, {
         error: { code: "workspace-disabled", message: "No mapped workspace is configured." }
+      });
+      return;
+    }
+    const preflight = validateCorsPreflight(request, url.pathname, context.allowedOrigins);
+    if (!preflight.ok) {
+      sendJson(response, preflight.status, {
+        error: { code: preflight.code, message: preflight.message }
       });
       return;
     }
@@ -689,21 +697,85 @@ async function readJsonBody(request: IncomingMessage): Promise<
   }
 }
 
-function applyCorsHeaders(request: IncomingMessage, response: ServerResponse, allowedOrigins: ReadonlySet<string>): void {
+interface CorsRoutePolicy {
+  methods: readonly string[];
+  headersByMethod: Readonly<Record<string, readonly string[]>>;
+}
+
+function applyCorsHeaders(
+  request: IncomingMessage,
+  response: ServerResponse,
+  allowedOrigins: ReadonlySet<string>,
+  pathname: string
+): void {
   const origin = request.headers.origin;
-  if (origin && allowedOrigins.has(origin)) {
+  const policy = getCorsRoutePolicy(pathname);
+  if (origin && allowedOrigins.has(origin) && policy) {
+    const allowedHeaders = [...new Set(Object.values(policy.headersByMethod).flat())];
     response.setHeader("Access-Control-Allow-Origin", origin);
-    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    response.setHeader(
-      "Access-Control-Allow-Headers",
-      `Content-Type, If-Match, If-None-Match, ${TYPR_WORKSPACE_MUTATION_HEADER}`
-    );
+    response.setHeader("Access-Control-Allow-Methods", `${policy.methods.join(", ")}, OPTIONS`);
+    if (allowedHeaders.length > 0) response.setHeader("Access-Control-Allow-Headers", allowedHeaders.join(", "));
     response.setHeader("Access-Control-Expose-Headers", "ETag");
     if (request.headers["access-control-request-private-network"] === "true") {
       response.setHeader("Access-Control-Allow-Private-Network", "true");
     }
     response.setHeader("Vary", "Origin, Access-Control-Request-Private-Network");
   }
+}
+
+function validateCorsPreflight(
+  request: IncomingMessage,
+  pathname: string,
+  allowedOrigins: ReadonlySet<string>
+): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  const origin = singleHeader(request.headers.origin);
+  if (!origin || !allowedOrigins.has(origin)) {
+    return { ok: false, status: 403, code: "cors-origin-forbidden", message: "This browser origin is not allowed." };
+  }
+  const policy = getCorsRoutePolicy(pathname);
+  if (!policy) {
+    return { ok: false, status: 404, code: "route-not-found", message: "No Companion API route exists at this path." };
+  }
+  const requestedMethod = singleHeader(request.headers["access-control-request-method"])?.toUpperCase();
+  if (!requestedMethod || !policy.methods.includes(requestedMethod)) {
+    return { ok: false, status: 405, code: "cors-method-forbidden", message: "The requested CORS method is not supported by this route." };
+  }
+  const allowedHeaders = new Set((policy.headersByMethod[requestedMethod] ?? []).map((header) => header.toLowerCase()));
+  const requestedHeaderValue = request.headers["access-control-request-headers"];
+  if (Array.isArray(requestedHeaderValue)) {
+    return { ok: false, status: 400, code: "cors-header-forbidden", message: "The requested CORS headers are malformed." };
+  }
+  const requestedHeaders = requestedHeaderValue
+    ? requestedHeaderValue.split(",")
+    .map((header) => header.trim().toLowerCase())
+    : [];
+  if (requestedHeaders.some((header) => !header || !allowedHeaders.has(header))) {
+    return { ok: false, status: 400, code: "cors-header-forbidden", message: "The requested CORS headers are not supported by this route." };
+  }
+  return { ok: true };
+}
+
+function getCorsRoutePolicy(pathname: string): CorsRoutePolicy | undefined {
+  if (pathname === TYPR_COMPANION_ROUTES.status) {
+    return { methods: ["GET"], headersByMethod: { GET: [] } };
+  }
+  if (pathname === TYPR_COMPANION_ROUTES.compile) {
+    return { methods: ["POST"], headersByMethod: { POST: ["Content-Type"] } };
+  }
+  if (pathname === TYPR_COMPANION_ROUTES.workspaceFiles) {
+    return { methods: ["GET"], headersByMethod: { GET: [] } };
+  }
+  if (pathname === TYPR_COMPANION_ROUTES.workspaceFile) {
+    return {
+      methods: ["GET", "PUT", "DELETE"],
+      headersByMethod: {
+        GET: [],
+        PUT: ["Content-Type", "If-Match", "If-None-Match", TYPR_WORKSPACE_MUTATION_HEADER],
+        DELETE: ["If-Match", TYPR_WORKSPACE_MUTATION_HEADER]
+      }
+    };
+  }
+  return undefined;
 }
 
 function getAllowedOriginsFromEnvironment(): ReadonlySet<string> {
@@ -720,10 +792,6 @@ function commandAvailable(command: string): Promise<boolean> {
     child.once("error", () => resolveAvailability(false));
     child.once("close", (code) => resolveAvailability(code === 0));
   });
-}
-
-function isBase64(value: string): boolean {
-  return value.length % 4 !== 1 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}={0,2}|[A-Za-z0-9+/]{3}={0,1})?$/.test(value);
 }
 
 function isWorkspaceRoute(pathname: string): boolean {

@@ -11,6 +11,13 @@ if (process.env.TYPR_COMPANION_DOCKER_SKIP_BUILD !== "1") {
 await run("docker", [
   "run",
   "--rm",
+  "--cap-drop", "ALL",
+  "--security-opt", "no-new-privileges:true",
+  "--read-only",
+  "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+  "--pids-limit", "256",
+  "--memory", "2g",
+  "--cpus", "2",
   "--entrypoint", "node",
   image,
   "--experimental-strip-types",

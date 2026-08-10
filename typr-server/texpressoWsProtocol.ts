@@ -14,6 +14,7 @@ import {
   type TexpressoShutdownMessage
 } from "../src/companion-protocol/texpresso.ts";
 import type { ProjectFile } from "../src/companion-protocol/index.ts";
+import { isBase64 } from "./base64.ts";
 
 export { TEXPRESSO_WS_PROTOCOL_VERSION, TEXPRESSO_WS_ROUTE };
 export type {
@@ -167,10 +168,6 @@ function validatePrivateProjectPath(value: unknown, label: string): string | und
   }
   if (value.split("/").some((segment) => segment === ".." || segment === "")) return `${label} must not contain traversal or empty segments.`;
   return undefined;
-}
-
-function isBase64(value: string): boolean {
-  return value.length % 4 !== 1 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}={0,2}|[A-Za-z0-9+/]{3}={0,1})?$/.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

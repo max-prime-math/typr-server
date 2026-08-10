@@ -29,7 +29,7 @@ Types do not validate JSON received over HTTP. Typr has no established runtime s
 latexmk -norc -pdf -no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error main.tex
 ```
 
-When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, 1 MiB combined process output/log capture, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data.
+When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, separate 1 MiB process-output and 1 MiB returned-log caps, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. It probes that policy before listening and therefore requires a Linux kernel with usable Landlock support. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data.
 
 Start it from the repository root:
 
@@ -69,6 +69,7 @@ Normal users run the published multi-platform image. Installation, updates, vers
 
 ```bash
 docker run -d --name typr-server --restart unless-stopped \
+  --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
   --pids-limit 256 --memory 2g --cpus 2 \

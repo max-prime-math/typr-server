@@ -56,7 +56,9 @@ describe("WorkspaceStore", () => {
     await store.delete("assets/nested/image.bin", updated.etag);
     await expect(store.read("assets/nested/image.bin"))
       .rejects.toMatchObject({ status: 404, code: "workspace-file-not-found" });
-    await expect(readdir(root)).resolves.toEqual([]);
+    await expect(readdir(root)).resolves.toEqual(["assets"]);
+    await expect(readdir(join(root, "assets"))).resolves.toEqual(["nested"]);
+    await expect(readdir(join(root, "assets/nested"))).resolves.toEqual([]);
   });
 
   it("does not leave internal temporary files after a successful atomic write", async () => {
@@ -67,6 +69,22 @@ describe("WorkspaceStore", () => {
     await expect(readFile(join(root, "file.txt"), "utf8")).resolves.toBe("atomic");
     expect((await readdir(root)).filter((name) => name.startsWith(".typr-companion-write-"))).toEqual([]);
   });
+
+  it.each(["write", "sync", "rename"] as const)(
+    "removes an internal temporary after a failed %s step",
+    async (failedStep) => {
+      const root = await createRoot();
+      const store = await WorkspaceStore.open(root, {
+        atomicWriteHook: (step) => {
+          if (step === failedStep) throw new Error(`injected ${step} failure`);
+        }
+      });
+
+      await expect(store.write("file.txt", Buffer.from("atomic"), { kind: "create" }))
+        .rejects.toThrow(`injected ${failedStep} failure`);
+      expect((await readdir(root)).filter((name) => name.startsWith(".typr-companion-write-"))).toEqual([]);
+    }
+  );
 
   it("rejects traversal, absolute, encoded-equivalent, reserved, and overlong paths", () => {
     const invalid = [
