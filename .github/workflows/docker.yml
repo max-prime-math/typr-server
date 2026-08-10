@@ -388,7 +388,7 @@ jobs:
           for tag in "${VERSION}" "sha-${SHORT_SHA}"; do
             target="${GHCR_IMAGE_NAME}:${tag}"
             docker buildx imagetools create --tag "${target}" "${GHCR_IMAGE_NAME}@${DIGEST}"
-            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done
 
@@ -496,11 +496,11 @@ jobs:
             --tag "${GHCR_IMAGE_NAME}:${MAJOR}" \
             "${GHCR_IMAGE_NAME}@${DIGEST}"
           for tag in "${MAJOR_MINOR}" "${MAJOR}"; do
-            resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${tag}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${tag}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done
           docker buildx imagetools create --tag "${GHCR_IMAGE_NAME}:latest" "${GHCR_IMAGE_NAME}@${DIGEST}"
-          resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:latest" | awk '$1 == "Digest:" { print $2; exit }')"
+          resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:latest" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
           test "${resolved}" = "${DIGEST}"
 
   mirror-dockerhub:
@@ -544,7 +544,7 @@ jobs:
           docker run --rm -v "${HOME}/.docker:/auth:ro" "${skopeo_image}" copy \
             --all --preserve-digests --authfile /auth/config.json \
             "docker://${GHCR_IMAGE_NAME}@${DIGEST}" "docker://${DESTINATION}:${candidate}"
-          destination_digest="$(docker buildx imagetools inspect "${DESTINATION}:${candidate}" | awk '$1 == "Digest:" { print $2; exit }')"
+          destination_digest="$(docker buildx imagetools inspect "${DESTINATION}:${candidate}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
           test "${destination_digest}" = "${DIGEST}"
           docker buildx imagetools inspect "${DESTINATION}@${destination_digest}" --raw > /tmp/dockerhub-index.json
           node scripts/verify-oci-image-index.mjs /tmp/dockerhub-index.json
@@ -586,7 +586,7 @@ jobs:
           for tag in "${VERSION}" "sha-${SHORT_SHA}"; do
             target="${DESTINATION}:${tag}"
             docker buildx imagetools create --tag "${target}" "${DESTINATION}@${DIGEST}"
-            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done
 
@@ -655,6 +655,6 @@ jobs:
             "${DESTINATION}@${DIGEST}"
           docker buildx imagetools create --tag "${DESTINATION}:latest" "${DESTINATION}@${DIGEST}"
           for tag in "${MAJOR_MINOR}" "${MAJOR}" latest; do
-            resolved="$(docker buildx imagetools inspect "${DESTINATION}:${tag}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${DESTINATION}:${tag}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done

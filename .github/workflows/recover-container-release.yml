@@ -212,7 +212,7 @@ jobs:
           for tag in "${VERSION}" "sha-${SHORT_SHA}"; do
             target="${GHCR_IMAGE_NAME}:${tag}"
             docker buildx imagetools create --tag "${target}" "${GHCR_IMAGE_NAME}@${DIGEST}"
-            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${target}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done
 
@@ -315,9 +315,9 @@ jobs:
             --tag "${GHCR_IMAGE_NAME}:${MAJOR}" \
             "${GHCR_IMAGE_NAME}@${DIGEST}"
           for tag in "${MAJOR_MINOR}" "${MAJOR}"; do
-            resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${tag}" | awk '$1 == "Digest:" { print $2; exit }')"
+            resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:${tag}" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
             test "${resolved}" = "${DIGEST}"
           done
           docker buildx imagetools create --tag "${GHCR_IMAGE_NAME}:latest" "${GHCR_IMAGE_NAME}@${DIGEST}"
-          resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:latest" | awk '$1 == "Digest:" { print $2; exit }')"
+          resolved="$(docker buildx imagetools inspect "${GHCR_IMAGE_NAME}:latest" | awk '$1 == "Digest:" && resolved == "" { resolved = $2 } END { print resolved }')"
           test "${resolved}" = "${DIGEST}"
