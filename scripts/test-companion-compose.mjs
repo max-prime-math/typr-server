@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -73,12 +73,18 @@ const workspaceConfig = config({ workspace: true });
 assertBaseConfig(workspaceConfig);
 assert.equal(workspaceConfig.services["typr-server"].environment.TYPR_COMPANION_WORKSPACE_ROOT, "/workspace");
 assert.equal(workspaceConfig.services["typr-server"].environment.TYPR_COMPANION_WORKSPACE_ID, "home-workspace");
-assert.deepEqual(workspaceConfig.services["typr-server"].volumes, [{
-  type: "bind",
-  source: "/tmp/typr-companion-workspace-contract",
-  target: "/workspace",
-  bind: { create_host_path: false }
-}]);
+const [workspaceMount] = workspaceConfig.services["typr-server"].volumes;
+assert.equal(workspaceMount.type, "bind");
+assert.equal(workspaceMount.source, "/tmp/typr-companion-workspace-contract");
+assert.equal(workspaceMount.target, "/workspace");
+if (Object.hasOwn(workspaceMount.bind, "create_host_path")) {
+  assert.equal(workspaceMount.bind.create_host_path, false);
+}
+assert.match(
+  await readFile(path.join(projectRoot, "compose.workspace.yaml"), "utf8"),
+  /create_host_path:\s*false/,
+  "workspace override must explicitly disable host-path creation"
+);
 
 const missingWorkspace = run("docker", ["compose", ...files(true), "config", "--quiet"], {
   allowFailure: true,
@@ -95,6 +101,40 @@ const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "typr-companion-compos
 // CI runners are not guaranteed to use the container's UID 1000. This directory
 // is an isolated throwaway fixture, so make only that fixture traversable/writable.
 await chmod(workspaceDir, 0o777);
+
+async function assertMissingHostPathFailsClosed() {
+  const missingDir = path.join(os.tmpdir(), `typr-companion-missing-${process.pid}-${Date.now()}`);
+  const projectName = `companion-compose-missing-${process.pid}-${Date.now()}`.toLowerCase();
+  const baseArgs = ["compose", "--project-name", projectName, ...files(true)];
+  const env = {
+    TYPR_COMPANION_IMAGE: image,
+    TYPR_COMPANION_PORT: "0",
+    TYPR_COMPANION_WORKSPACE_DIR: missingDir
+  };
+  let created = false;
+  try {
+    const result = run("docker", [...baseArgs, "up", "-d", "--no-build", "--pull", "never"], {
+      allowFailure: true,
+      env,
+      timeout: 60_000
+    });
+    assert.notEqual(result.status, 0, "Compose unexpectedly accepted a missing workspace host path");
+    try {
+      await lstat(missingDir);
+      created = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  } finally {
+    run("docker", [...baseArgs, "down", "--remove-orphans", "--volumes", "--timeout", "15"], {
+      allowFailure: true,
+      env,
+      timeout: 60_000
+    });
+    await rm(missingDir, { recursive: true, force: true });
+  }
+  assert.equal(created, false, "Compose created the missing workspace host path");
+}
 
 function assertRuntime(containerId, { workspace }) {
   const inspected = JSON.parse(run("docker", ["inspect", containerId]).stdout)[0];
@@ -167,6 +207,7 @@ function smoke({ label, workspace = false }) {
 }
 
 try {
+  await assertMissingHostPathFailsClosed();
   smoke({ label: "stateless" });
   smoke({ label: "workspace", workspace: true });
   assert.equal(await readFile(path.join(workspaceDir, "compose.txt"), "utf8"), "compose smoke\n");

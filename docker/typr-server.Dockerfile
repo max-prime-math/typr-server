@@ -2,7 +2,7 @@
 
 # This tag is multi-architecture and keeps the runtime aligned with the Node
 # 22.6+ requirement for built-in TypeScript type stripping.
-ARG NODE_IMAGE=node:22.23.2-bookworm-slim
+ARG NODE_IMAGE=node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
 ARG TEXPRESSO_REV=e8df7709077b2f86f6e16e6c86ceefb86de06f8d
 ARG WS_VERSION=8.21.3
 ARG COMPANION_VERSION=0.1.2-dev

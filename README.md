@@ -23,7 +23,9 @@ separate [`compose.workspace.yaml`](compose.workspace.yaml) override enables one
 exact administrator-selected directory. Unraid users should follow the
 [separate Companion template guide](docs/companion-unraid.md).
 The [protocol guide](docs/companion-protocol.md) documents the versioned API and
-the experimental live-preview transport.
+the experimental live-preview transport. Maintainers use the
+[staged release policy](docs/companion-release.md); a Git tag is never the first
+test of an image.
 
 ## Develop
 

@@ -4,29 +4,56 @@ title: Release Typr Companion
 
 # Release Typr Companion
 
-This is the maintainer workflow for `ghcr.io/max-prime-math/typr-server` and its optional Docker Hub mirror. It is deliberately independent from Typr frontend releases and deployment-channel promotions.
+This is the maintainer policy for `ghcr.io/max-prime-math/typr-server` and its
+optional Docker Hub mirror. Companion and Typr frontend releases have independent
+repositories, tag namespaces, versions, workflows, packages, and templates.
 
 ## Independent versions
 
-Keep these values separate:
+- `companion-release.json` declares the next stable Companion image version.
+- An annotated `vMAJOR.MINOR.PATCH` Git tag selects that version.
+- `TYPR_COMPANION_PROTOCOL_VERSION` is an API compatibility version and changes
+  only for a protocol break.
+- The TeXpresso source revision remains a separately pinned Docker build argument
+  and OCI label.
 
-- The Typr PWA version is the application/package version.
-- The Companion version is injected into the image from a stable Git tag and returned as `serverVersion`.
-- `TYPR_COMPANION_PROTOCOL_VERSION` controls API compatibility and does not change for an image-only release.
-- The TeXpresso source revision is a separately pinned Docker build argument and OCI label.
+Do not increment the protocol merely to publish a container update. The first
+standalone release continues the existing image stream as `v0.1.2`; historical
+`v0.1.0` and `v0.1.1` tags remain only in the original Typr repository and must
+never be copied or moved.
 
-Matching numbers are allowed but do not make these values the same version stream. Do not edit `/api/v1` or increment the protocol merely to publish a container update.
+## CI and staged publication
 
-## CI and publish boundary
+Pull requests, `main` pushes, and manual dispatches run source and native image
+tests but never log into a registry. Native amd64 and arm64 jobs run production
+Compose plus the REST sandbox, TeXpresso persistence, raster, and private
+WebSocket harnesses.
 
-`.github/workflows/docker.yml` runs on pull requests, pushes to `main`, matching version tags, and manual dispatches. A source job typechecks and runs the standalone protocol/server unit suite. Its architecture matrix then builds and runs the Docker harnesses for:
+Only a pushed annotated version tag in the official repository may publish. The
+workflow requires its version to match `companion-release.json`, its peeled
+commit to equal the workflow SHA, and that commit to remain reachable from current
+`origin/main`.
+Release tags share one non-cancelling concurrency group, so two versions cannot
+race moving aliases.
 
-- `linux/amd64` natively on the GitHub-hosted amd64 runner;
-- `linux/arm64` natively on GitHub's `ubuntu-24.04-arm` runner.
+After all prepublication tests pass, the workflow:
 
-Both jobs verify container startup/status, simple and multi-file pdfLaTeX, a binary image asset, typed invalid-LaTeX failure, mapped-workspace API/path/symlink/precondition limits, compiler isolation from the mounted workspace, disabled shell escape and latexmk rc files, timeout/concurrency/output/cleanup recovery, persistent TeXpresso execution, raster page export, and the full WebSocket live-preview lifecycle. Frontend behavior is validated independently in the Typr repository against the exact protocol commit it pins.
+1. builds one multi-platform run-unique `candidate-*` image with BuildKit max
+   provenance and SPDX SBOM attestations;
+2. verifies the candidate OCI index contains runnable amd64 and arm64 images and
+   an attestation manifest for each;
+3. pulls that exact digest on native amd64 and arm64 runners and repeats all five
+   production harnesses;
+4. creates immutable exact-version and 12-character SHA tags from the verified
+   digest without rebuilding;
+5. anonymously pulls those exact tags on both native architectures and verifies
+   version, revision, and non-root user;
+6. only then promotes the minor, major, and `latest` aliases.
 
-Pull requests, branch pushes, and manual dispatches never log into a registry and never publish. The publish job requires both architecture test jobs and a Git ref beginning with `refs/tags/v`; it then validates the stricter exact form `vMAJOR.MINOR.PATCH`. A malformed tag fails before registry login/push.
+Candidate objects are registry staging artifacts, not releases. Exact Git tags
+and exact image tags are immutable. If a run fails after an exact tag exists,
+inspect it and rerun only when it resolves to the same candidate digest; never
+rebuild over that version.
 
 ## Stable tags
 
@@ -37,74 +64,87 @@ ghcr.io/max-prime-math/typr-server:0.1.2
 ghcr.io/max-prime-math/typr-server:0.1
 ghcr.io/max-prime-math/typr-server:0
 ghcr.io/max-prime-math/typr-server:latest
-ghcr.io/max-prime-math/typr-server:sha-<short-sha>
+ghcr.io/max-prime-math/typr-server:sha-<12-character-sha>
 ```
 
-`latest` is created only in the guarded stable tag job. It is never published from `dev`, `development`, `beta`, `main`, pull requests, or manual runs.
+The existing `0` compatibility alias is retained for the `0.1.x` stream. Review
+and remove the major-zero alias before a future `0.2.0` if minor releases may
+break compatibility. `latest` is written last and never published by a branch,
+pull request, or manual run. Promotion rejects a semantic-version downgrade.
 
-If the repository variable `DOCKERHUB_USERNAME` is configured, the same build also publishes every tag above to `<DOCKERHUB_USERNAME>/typr-server`. If the variable is absent, Docker Hub login and tags are omitted while GHCR publication continues normally.
+## Mandatory GHCR package gate
 
-After the manifest is pushed, two clean jobs pull the versioned image by target platform and rerun status/version and conventional compile checks against the published artifact. This checks the registry manifest rather than only the pre-publish BuildKit result.
+The existing public `typr-server` package is linked historically to
+`max-prime-math/typr`. Before pushing `v0.1.2`, open that package's settings:
 
-## Create a release
+1. add `max-prime-math/typr-server` under **Manage Actions access** with
+   **Write** access;
+2. connect the package to the standalone repository separately;
+3. confirm visibility remains **Public** and anonymous pulls still work.
 
-First ensure the chosen commit has passed the Docker workflow and the normal application tests. From a clean checkout of that exact commit:
+Do not delete or recreate the package and do not change its namespace. Configure
+the GitHub `container-release` environment with required reviewers and restrict
+it to protected `v*` tags. Package linkage, Actions access, visibility, and the
+release environment are distinct settings.
+
+## Create `v0.1.2`
+
+Only after the complete local and GitHub validation matrix is green, from a
+clean exact `main` checkout:
 
 ```bash
 git tag -a v0.1.2 -m "Typr Companion v0.1.2"
 git push origin v0.1.2
 ```
 
-Pushing the tag is the publication trigger. Do not create or push it until a public GHCR release is intended. If the workflow fails before publish, fix the cause and use a new version tag rather than moving a tag that users may already have resolved.
+Pushing the tag intentionally starts publication. If a prepublication step
+fails, fix it before any new tag. If an immutable release has already been
+published, use a new patch version rather than moving or force-pushing the tag.
 
-After the first successful publication, open the `typr-server` package settings and confirm its visibility is **Public**. GHCR package visibility is managed separately from the repository; anonymous `docker pull` and the unauthenticated Compose/Unraid install paths work only after the container package is public. Verify from a logged-out shell before announcing the release:
+After alias promotion, use a clean Docker configuration and verify anonymous
+platform pulls by exact version and digest before announcing the release.
 
-```bash
-docker pull ghcr.io/max-prime-math/typr-server:latest
-```
+## Optional Docker Hub mirror
 
-## Enable the Docker Hub mirror
+GHCR is canonical and sufficient for Docker, Compose, and Unraid. The downstream
+mirror is enabled only when all three GitHub settings exist:
 
-Docker Hub is optional; GHCR is sufficient for Docker, Compose, and the Unraid template. To enable the mirror:
+- variable `DOCKERHUB_NAMESPACE`: destination user or organization;
+- variable `DOCKERHUB_USERNAME`: service account used for login;
+- secret `DOCKERHUB_TOKEN`: scoped token that can write the intended
+  `typr-server` repository.
 
-1. Create a public Docker Hub repository named `typr-server` under the intended user or organization.
-2. Create a Docker Hub personal access token with permission to write that repository. Do not use the account password.
-3. In the GitHub repository settings, add an Actions variable named `DOCKERHUB_USERNAME` containing the Docker Hub namespace.
-4. Add an Actions secret named `DOCKERHUB_TOKEN` containing the access token.
+The mirror uses a digest-pinned Skopeo image to copy the verified multi-platform
+index, blobs, and attestations recursively while preserving its digest. It does
+not rebuild or attempt a cross-registry retag. Cross-
+registry operations cannot be transactional: a Docker Hub failure does not roll
+back or invalidate GHCR, and a failed job may leave partial mirror tags that must
+be inspected before retry. Never put a placeholder Docker Hub namespace in the
+Unraid template.
 
-The next valid `vMAJOR.MINOR.PATCH` tag logs into both registries and pushes the same multi-platform build, semver tags, OCI metadata, provenance, and SBOM. If `DOCKERHUB_USERNAME` is configured but its token is missing or invalid, publication fails instead of silently producing only one registry copy.
+## Permissions, pins, and attestations
+
+The workflow defaults to `contents: read`. Only candidate publication and tag
+promotion receive `packages: write`; candidate verification receives
+`packages: read`. All third-party actions are pinned to full immutable commit
+SHAs. Registry credentials are supplied only to the jobs that need them.
+
+Release images carry OCI source, documentation, version, full Git revision,
+commit timestamp, and AGPL license labels plus Companion protocol and TeXpresso
+revision labels. BuildKit publishes max provenance and an SPDX SBOM, and the
+candidate gate verifies that attestation manifests exist for both runnable
+platforms before any exact tag is created.
+
+The Node base image is pinned by multi-platform digest, as are the TeXpresso Git
+revision and the runtime `ws` package integrity. Debian packages are resolved
+from the pinned Bookworm base's configured repositories at build time, so the
+tested registry candidate digest—not a later source rebuild—is the rollback and
+promotion boundary.
 
 ## Community Applications readiness
 
-[`unraid/typr-companion.xml`](../unraid/typr-companion.xml) is usable as a direct Unraid user template before store listing. Community Applications submission should happen only after:
-
-- at least one public stable image is available at the template's `latest` tag;
-- the template and icon URLs are available from the `main` branch;
-- the documented remote HTTPS connection has been tested on an Unraid host;
-- a public Unraid support topic or equivalent maintained support destination exists.
-- root [`ca_profile.xml`](../ca_profile.xml) has a real forum/support destination
-  and the portal's Validate and Scan actions pass.
-
-The template is not submitted automatically by the release workflow. Store submission is a separate maintainer action because it creates an ongoing support obligation.
-
-## Permissions and metadata
-
-The workflow defaults to `contents: read`. Only the publish job receives `packages: write`; published-image verification uses `packages: read`. GHCR authentication uses GitHub's built-in `GITHUB_TOKEN`. Optional Docker Hub authentication uses the repository's `DOCKERHUB_USERNAME` variable and masked `DOCKERHUB_TOKEN` secret; no registry credential is committed.
-
-Release images contain OCI source, documentation, version, Git revision, commit-date build timestamp, and AGPL license labels. Typr-specific labels record Companion protocol version and the pinned TeXpresso commit. Buildx also publishes standard provenance and SBOM attestations.
-
-## Build cache and reproducibility
-
-BuildKit's GitHub Actions cache uses one scope per architecture. The release build imports both scopes, so unchanged TeX Live, native TeXpresso, and runtime dependency layers can be reused while source-only changes recopy the small server layer. Cache hits never replace Dockerfile inputs or skip tests.
-
-The Node base tag, TeXpresso commit, and exact `ws` package (including registry integrity) are pinned. Debian packages are intentionally resolved from the selected Bookworm image repositories and the multi-architecture base is version-tagged rather than digest-pinned. Therefore release digests, not later source rebuilds, are the reproducible rollback boundary.
-
-## Architecture evidence
-
-Treat these states precisely in release notes:
-
-- A successful Buildx build is **built successfully**.
-- The amd64 matrix runtime suite on `ubuntu-latest` is **tested natively**.
-- The arm64 matrix runtime suite on `ubuntu-24.04-arm` is **tested natively on arm64**.
-
-Do not describe arm64 as runtime-verified until its matrix suite completes. If an architecture fails, the `needs: test-image` dependency blocks the entire manifest; never remove the failing platform and silently publish a partial release.
+The Unraid template remains independent from release automation. Submission is
+blocked until the stable public alias exists, a real Unraid install and trusted
+HTTPS/WebSocket path pass, a maintained forum support topic exists, profile XML
+is complete, portal Validate/Scan pass, and the maintainer explicitly approves
+submission. Public Internet exposure remains prohibited.
