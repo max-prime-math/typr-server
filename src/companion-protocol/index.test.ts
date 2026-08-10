@@ -7,7 +7,7 @@ import {
   type CompileRequest,
   type CompileResult,
   type CompileSuccess
-} from "./index";
+} from "./index.ts";
 
 describe("Typr Companion protocol", () => {
   it("defines the initial version and versioned routes", () => {

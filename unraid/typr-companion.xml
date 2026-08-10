@@ -2,19 +2,19 @@
 <Container version="2">
   <Name>Typr-Companion</Name>
   <Repository>ghcr.io/max-prime-math/typr-server:latest</Repository>
-  <Registry>https://github.com/max-prime-math/typr/pkgs/container/typr-server</Registry>
+  <Registry>https://github.com/max-prime-math/typr-server/pkgs/container/typr-server</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/max-prime-math/typr/issues</Support>
-  <GitHub>https://github.com/max-prime-math/typr</GitHub>
-  <ReadMe>https://github.com/max-prime-math/typr/blob/main/docs/companion-unraid.md</ReadMe>
+  <Support>https://github.com/max-prime-math/typr-server/issues</Support>
+  <GitHub>https://github.com/max-prime-math/typr-server</GitHub>
+  <ReadMe>https://github.com/max-prime-math/typr-server/blob/main/docs/companion-unraid.md</ReadMe>
   <Project>https://typr.ca</Project>
   <Overview>Typr Companion provides native latexmk/pdfLaTeX compilation and experimental TeXpresso live preview for Typr. It stores no projects and needs no persistent volume. For a browser on another device, publish this service through an HTTPS reverse proxy and enter that URL in Typr Settings &gt; Editor &gt; Typr Companion.</Overview>
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8484]/api/v1/status</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/max-prime-math/typr/main/unraid/typr-companion.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/max-prime-math/typr-server/main/unraid/typr-companion.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/max-prime-math/typr/main/public/icons/icon-512.png</Icon>
   <ExtraParams>--restart=unless-stopped --security-opt=no-new-privileges:true</ExtraParams>
   <PostArgs/>
@@ -22,7 +22,7 @@
   <Date>2026-08-09</Date>
   <Changes>2026-08-09: Initial Typr Companion template.</Changes>
   <Beta>False</Beta>
-  <Requires>Use only on a trusted LAN. The service has no user authentication. An HTTPS reverse proxy with WebSocket support is required when typr.ca runs in a browser on a different device.</Requires>
+  <Requires>Use only on a trusted LAN or VPN. Never expose this unauthenticated service to the public Internet. An HTTPS reverse proxy with WebSocket support is required when typr.ca runs in a browser on a different device.</Requires>
   <Config Name="Companion port" Target="8484" Default="8484" Mode="tcp" Description="Host port used by the reverse proxy and local status checks. Container port must remain 8484." Type="Port" Display="always" Required="true" Mask="false">8484</Config>
   <Config Name="Allowed Typr origins" Target="TYPR_COMPANION_ALLOWED_ORIGINS" Default="https://typr.ca,https://beta.typr.ca,https://dev.typr.ca" Mode="" Description="Comma-separated exact browser origins allowed by CORS. Add a custom Typr deployment here if needed." Type="Variable" Display="advanced" Required="true" Mask="false">https://typr.ca,https://beta.typr.ca,https://dev.typr.ca</Config>
 </Container>

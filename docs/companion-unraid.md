@@ -17,7 +17,7 @@ Until the template is listed in Community Applications, install it as a user tem
 
    ```bash
    curl -fsSL \
-     https://raw.githubusercontent.com/max-prime-math/typr/main/unraid/typr-companion.xml \
+     https://raw.githubusercontent.com/max-prime-math/typr-server/main/unraid/typr-companion.xml \
      -o /boot/config/plugins/dockerMan/templates-user/typr-companion.xml
    ```
 

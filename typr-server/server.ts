@@ -22,7 +22,7 @@ import { TEXPRESSO_WS_LIMITS, TEXPRESSO_WS_ROUTE } from "./texpressoWsProtocol.t
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
-const DEFAULT_SERVER_VERSION = "0.1.0";
+const DEFAULT_SERVER_VERSION = "0.1.2-dev";
 const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 const IMPLEMENTED_ENGINES = ["pdflatex"] as const;
 const DEFAULT_ALLOWED_ORIGINS = new Set([

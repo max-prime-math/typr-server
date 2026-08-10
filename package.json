@@ -1,0 +1,43 @@
+{
+  "name": "@max-prime-math/typr-companion-protocol",
+  "version": "1.0.0",
+  "description": "Typr Companion server and its transport-neutral protocol contract.",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/max-prime-math/typr-server.git"
+  },
+  "exports": {
+    ".": "./src/companion-protocol/index.ts",
+    "./texpresso": "./src/companion-protocol/texpresso.ts"
+  },
+  "files": [
+    "src/companion-protocol/index.ts",
+    "src/companion-protocol/texpresso.ts",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "companion": "node --experimental-strip-types typr-server/cli.ts",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run src/companion-protocol typr-server",
+    "test:companion:docker": "node scripts/test-companion-docker.mjs",
+    "texpresso:poc": "node --experimental-strip-types typr-server/texpresso-poc.ts",
+    "test:texpresso:poc": "node scripts/test-texpresso-poc-docker.mjs",
+    "test:texpresso:render": "node scripts/test-texpresso-render-docker.mjs",
+    "test:texpresso:ws": "node scripts/test-texpresso-ws-docker.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/ws": "8.18.1",
+    "typescript": "5.8.3",
+    "vitest": "4.1.7"
+  }
+}

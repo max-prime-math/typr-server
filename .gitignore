@@ -1,0 +1,5 @@
+node_modules/
+coverage/
+qa-ui-artifacts/
+*.log
+*.pdf

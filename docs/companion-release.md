@@ -4,7 +4,7 @@ title: Release Typr Companion
 
 # Release Typr Companion
 
-This is the maintainer workflow for `ghcr.io/max-prime-math/typr-server` and its optional Docker Hub mirror. It is deliberately independent from the PWA's Development → Beta → Stable branch promotions.
+This is the maintainer workflow for `ghcr.io/max-prime-math/typr-server` and its optional Docker Hub mirror. It is deliberately independent from Typr frontend releases and deployment-channel promotions.
 
 ## Independent versions
 
@@ -30,10 +30,10 @@ Pull requests, branch pushes, and manual dispatches never log into a registry an
 
 ## Stable tags
 
-Tag `v0.1.1` publishes:
+Tag `v0.1.2` publishes:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.1
+ghcr.io/max-prime-math/typr-server:0.1.2
 ghcr.io/max-prime-math/typr-server:0.1
 ghcr.io/max-prime-math/typr-server:0
 ghcr.io/max-prime-math/typr-server:latest
@@ -51,8 +51,8 @@ After the manifest is pushed, two clean jobs pull the versioned image by target 
 First ensure the chosen commit has passed the Docker workflow and the normal application tests. From a clean checkout of that exact commit:
 
 ```bash
-git tag -a v0.1.1 -m "Typr Companion v0.1.1"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "Typr Companion v0.1.2"
+git push origin v0.1.2
 ```
 
 Pushing the tag is the publication trigger. Do not create or push it until a public GHCR release is intended. If the workflow fails before publish, fix the cause and use a new version tag rather than moving a tag that users may already have resolved.

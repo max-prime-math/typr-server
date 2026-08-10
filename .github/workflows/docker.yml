@@ -19,7 +19,7 @@ env:
 
 jobs:
   source-checks:
-    name: Typecheck, unit tests, and frontend build
+    name: Typecheck, unit tests, and distribution metadata
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -42,9 +42,6 @@ jobs:
 
       - name: Run unit tests
         run: npm test
-
-      - name: Build production frontend
-        run: npm run build
 
   test-image:
     name: Build and test (${{ matrix.platform }})
@@ -79,7 +76,7 @@ jobs:
         id: build-metadata
         shell: bash
         run: |
-          version="0.1.1-dev.${GITHUB_SHA::12}"
+          version="0.1.2-dev.${GITHUB_SHA::12}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
           fi

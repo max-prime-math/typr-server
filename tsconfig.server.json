@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["typr-server/**/*.ts", "src/companion-protocol/index.ts"]
+  "include": ["typr-server/**/*.ts", "src/companion-protocol/**/*.ts"]
 }
