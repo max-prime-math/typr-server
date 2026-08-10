@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -162,7 +162,13 @@ try {
   assert(apiCreate.status === 201, "Mapped workspace API must conditionally create a nested file.");
   const apiEtag = apiCreate.headers.get("etag");
   assert(apiEtag?.startsWith('"sha256-'), "Mapped workspace writes must return a strong ETag.");
-  assert((await readFile(resolve(workspaceRoot, "nested/api-created.bin"))).equals(Buffer.from([0, 1, 2, 255])), "Mapped workspace API must preserve binary bytes.");
+  const apiRead = await fetch(apiFileUrl);
+  assert(apiRead.ok, "Mapped workspace API must read back the file it created.");
+  const apiReadBody = await apiRead.json();
+  assert(
+    Buffer.from(apiReadBody.content, "base64").equals(Buffer.from([0, 1, 2, 255])),
+    "Mapped workspace API must preserve binary bytes."
+  );
   const apiDelete = await fetch(apiFileUrl, {
     method: "DELETE",
     headers: { "X-Typr-Workspace-Mutation": "1", "If-Match": apiEtag }
