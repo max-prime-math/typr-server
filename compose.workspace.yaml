@@ -1,0 +1,12 @@
+services:
+  typr-server:
+    environment:
+      TYPR_COMPANION_WORKSPACE_ROOT: /workspace
+      TYPR_COMPANION_WORKSPACE_ID: ${TYPR_COMPANION_WORKSPACE_ID:-home-workspace}
+    volumes:
+      - type: bind
+        source: ${TYPR_COMPANION_WORKSPACE_DIR:?set TYPR_COMPANION_WORKSPACE_DIR to one dedicated workspace directory}
+        target: /workspace
+        read_only: false
+        bind:
+          create_host_path: false

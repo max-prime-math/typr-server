@@ -4,16 +4,24 @@ title: Install Typr Companion on Unraid
 
 # Install Typr Companion on Unraid
 
-Typr Companion can run on an Unraid server from the official GHCR image. It stores no projects and needs no appdata volume.
+Typr Companion can run on Unraid from the official
+`ghcr.io/max-prime-math/typr-server` image. It is stateless by default. One
+dedicated host directory can optionally be mapped for explicit manual project
+sync; browser-local Typr remains authoritative.
 
-There is one important network difference from desktop Docker: the Typr PWA runs in your browser, so `127.0.0.1` means the browser device, not the Unraid server. Because Typr is served over HTTPS, browsers also block a plain HTTP Companion on a LAN address as mixed content. A remote Unraid installation therefore needs an HTTPS reverse proxy with a trusted certificate.
+The service has no authentication. Use it only on a trusted LAN or private VPN,
+with mutually trusted users and documents. **Never expose it to the public
+Internet**, through router port forwarding, a public tunnel, or a public reverse
+proxy. TLS improves transport and browser compatibility; it does not add
+application authentication.
 
 ## Install the template
 
-Until the template is listed in Community Applications, install it as a user template:
+Until the template is listed in Community Applications, install it as a user
+template:
 
 1. Open an Unraid terminal.
-2. Download [`unraid/typr-companion.xml`](../unraid/typr-companion.xml) to the user-template directory:
+2. Download [`unraid/typr-companion.xml`](../unraid/typr-companion.xml):
 
    ```bash
    curl -fsSL \
@@ -21,26 +29,62 @@ Until the template is listed in Community Applications, install it as a user tem
      -o /boot/config/plugins/dockerMan/templates-user/typr-companion.xml
    ```
 
-3. Open **Docker → Add Container**.
-4. Select **Typr-Companion** from the template list.
-5. Keep bridge networking, container port `8484`, and the default allowed origins.
-6. Apply the template and wait for the image to download.
+3. Open **Docker → Add Container** and select **Typr-Companion**.
+4. Keep bridge networking and container port `8484`.
+5. Add the exact self-hosted Typr origin to **Allowed Typr origins** if needed.
+6. Leave **Workspace directory** and **Workspace API root** blank for the
+   default stateless deployment. The prefilled Workspace ID is ignored while
+   the root is blank.
+7. Apply the template and wait for a healthy container.
 
-The template uses `ghcr.io/max-prime-math/typr-server:latest`, runs without privileged mode or persistent volumes, enables `no-new-privileges`, and restarts unless stopped.
+The template enforces UID 1000, non-privileged operation, dropped capabilities,
+no-new-privileges, a read-only root, 512 MiB no-exec tmpfs, 256 PIDs, 2 GiB
+memory/swap, and two CPUs. The image probes its Landlock launcher before
+listening and fails closed if the Unraid kernel cannot enforce the compiler
+filesystem boundary. Actual kernel compatibility remains part of real-host
+validation.
+
+## Optional mapped workspace
+
+Configure all three advanced workspace fields together:
+
+- **Workspace directory:** one newly created dedicated directory, mounted RW to
+  `/workspace`.
+- **Workspace API root:** exactly `/workspace`.
+- **Workspace ID:** a stable opaque identifier such as `home-workspace`.
+
+The host directory must be readable and writable by UID 1000. Do not map `/`,
+`/mnt`, `/mnt/user`, an entire share, an appdata root, a symlinked directory, or
+the Docker socket. Create a narrowly named subdirectory and grant UID 1000 only
+the access it needs.
+
+The API exposes regular files below that exact root; it does not expose the host
+path or arbitrary browsing. Browser storage remains the primary copy and sync is
+manual. Unlinking or removing the container does not delete mapped files, but an
+explicit file-API deletion does delete that selected host file. Keep independent
+backups.
 
 ## Verify the container
 
-From Unraid, request the status endpoint:
+From Unraid:
 
 ```bash
 curl -fsS http://127.0.0.1:8484/api/v1/status
 ```
 
-The response should report protocol version `1` and advertise `pdflatex`. The template's WebUI link opens this same status response.
+The response reports protocol version 1, native compile capabilities, and
+`projectStorage: false` unless all mapped-workspace fields are valid. The WebUI
+link opens the same status response. Startup failures are visible in the
+container log.
 
-## Add HTTPS
+## Add trusted HTTPS
 
-Create a dedicated hostname such as `typr-companion.example.com` in your existing reverse proxy. Forward it to `http://UNRAID-IP:8484`, issue a publicly trusted or locally trusted certificate, and enable WebSocket upgrades. A representative Nginx location is:
+In a browser on another device, `127.0.0.1` means that browser device, not the
+Unraid server. An HTTPS Typr page also cannot call a plain HTTP/WS Companion
+because the browser blocks mixed content. Create a dedicated client-trusted HTTPS
+hostname restricted by firewall or VPN to trusted clients. Forward it to
+`http://UNRAID-IP:8484`, enable WebSocket upgrades, use a long read timeout, and
+allow request bodies of at least 25 MiB. For example:
 
 ```nginx
 location / {
@@ -54,27 +98,44 @@ location / {
 }
 ```
 
-Do not send this hostname through a public tunnel or expose it to the internet. The Companion has an origin allowlist, but it does not have user authentication and native TeX compilation is not a hostile-input sandbox. Limit access at the reverse proxy and firewall to trusted LAN/VPN clients.
+Keep the hostname unreachable from the public Internet. Plain HTTP on a
+non-loopback LAN address is not a secure context and a self-hosted Typr page will
+lose service-worker/PWA and filesystem-related features. A self-signed
+certificate must be trusted by every client before it is useful.
 
 ## Connect Typr
 
-1. Open Typr in the browser that will use the Companion.
+1. Open Typr in the browser that will use Companion.
 2. Open **Settings → Editor → Typr Companion**.
-3. Enter the HTTPS URL, for example `https://typr-companion.example.com`.
-4. Select **Apply**.
+3. Enter the browser-reachable HTTPS URL and select **Apply**.
+4. If a workspace is configured, open **Settings → Sync** and explicitly link
+   the selected project.
 
-Chrome or Edge may ask whether Typr can access devices on the local network; allow it for this connection. The Companion answers private-network preflights only for origins in its CORS allowlist. Other browsers may expose an equivalent site permission.
+The URL is saved only in that browser. Allowed origins contain exact scheme,
+host, and port values with no path or trailing slash. CORS is not authentication.
+Chrome or Edge may also request Local Network Access permission.
 
-The connection status should change to **Connected**. The URL is saved only in that browser. Use **Reset** to return to desktop Docker at `http://127.0.0.1:8484`.
+If the status remains unavailable, inspect the browser console, Companion logs,
+reverse-proxy WebSocket settings, firewall/VPN rules, certificate trust, and
+`TYPR_COMPANION_ALLOWED_ORIGINS`.
 
-If the status remains unavailable, check the browser developer console, the reverse-proxy WebSocket settings, `docker logs Typr-Companion`, and the `TYPR_COMPANION_ALLOWED_ORIGINS` value in the Unraid template.
+## Update, pin, roll back, or remove
 
-## Update or remove
-
-Use Unraid's normal container update action to pull a newer `latest` image. To pin a reproducible release, edit the Repository field to a complete version such as:
+Use Unraid's normal container update action for `latest`. For reproducible
+native TeX behavior, change Repository to a complete version after it is
+published, for example:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.1
+ghcr.io/max-prime-math/typr-server:0.1.2
 ```
 
-Removing the container removes the entire Companion installation. There is no appdata directory or project volume to delete.
+Rollback uses the same field with the prior known-good version. Removing the
+container removes no browser-local projects and no mapped host directory.
+
+The template remains a direct user template until both public image tags exist,
+it passes install/update/rollback/removal and HTTPS/WebSocket tests on a real
+Unraid host, a maintained Unraid forum support topic exists, and the maintainer
+puts that identical URL in the template's `Support` and profile's `Forum`
+fields. Then run `npm run test:unraid -- --submission-ready` and the portal's
+Validate and Scan actions before the maintainer explicitly approves Community
+Applications submission.

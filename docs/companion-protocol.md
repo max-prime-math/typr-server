@@ -147,6 +147,11 @@ npm run test:companion:docker
 
 ## Experimental TeXpresso POC
 
+The measurements and limitations in this POC section are historical experiment
+records. Current production deployment, resource limits, native-filesystem
+confinement, and multi-architecture validation are defined by the
+[installation guide](./companion-installation.md), Dockerfile, and release CI.
+
 TeXpresso is included only to evaluate a fast, persistent editing loop. It does **not** change `/api/v1/compile`, the advertised `pdflatex` capability, Typr's frontend behavior, or BusyTeX. The existing `latexmk` path remains the authoritative compatibility/final-build compiler.
 
 The image builds the upstream [TeXpresso](https://github.com/let-def/texpresso) source at commit [`e8df7709077b2f86f6e16e6c86ceefb86de06f8d`](https://github.com/let-def/texpresso/commit/e8df7709077b2f86f6e16e6c86ceefb86de06f8d). Its build stage installs the documented Debian build dependencies (GCC/Make, SDL2, MuPDF, font/text libraries, and headers) and runs `make all`. The final image keeps the resulting `texpresso` frontend and its custom `texpresso-xetex` engine plus the required shared libraries. It deliberately selects TeX Live with TeXpresso's `-texlive` flag; Tectonic is not installed or used.
@@ -195,7 +200,12 @@ The important preview result is negative for immediate frontend integration: TeX
 
 Therefore a Typr browser live-preview transport would need a new server-side rendering export that supplies each changed page as a transportable raster image (or a browser-compatible vector/display-list representation). The current upstream editor protocol exposes neither, so it cannot simply be connected to Typr's existing PDF viewer or sent through a future WebSocket unchanged. This is why TeXpresso remains experimental and internal.
 
-The POC does not impose a hostile-document sandbox or hard per-session resource limit. It does ensure explicit cleanup, bounded captured output, timeouted waits, and non-root execution. Future work should add session ownership/lifetime limits, stronger CPU/memory/process isolation, and a deliberate page-render transport before exposing it beyond trusted local use.
+At the time of this initial POC, the standalone experiment did not impose a
+hostile-document sandbox or hard per-session resource limit. The production
+Companion now adds fail-closed Landlock confinement, bounded output and time,
+session lifetime/admission limits, process-group termination, and container
+PID/memory/CPU limits. These controls still do not make native parsers a safe
+multi-tenant hostile-document service.
 
 ## Experimental TeXpresso page-render export POC
 
@@ -236,7 +246,11 @@ For rough one-way transfer estimates, the 25 KB average 144-DPI page costs about
 
 After an invalid edit, TeXpresso reported diagnostics; the session's retained cached page remains available as the last successful preview. A fresh render from TeXpresso's current error state completed but differed from that retained image, so a future frontend should keep serving the last-good revision while presenting diagnostics rather than replace pages during errors. The same process recovered after the error was fixed.
 
-This run was amd64 only. The Dockerfile remains architecture-neutral because it builds pinned C/C++ source in the target image; Debian/Node/TeX Live packages are available for arm64, but timing, MuPDF output, and memory need a separate arm64 run. The export patch changes source code only and did not add runtime packages; image size should therefore remain effectively at the prior approximately 395 MiB measurement (the current image reports 395 MiB decimal).
+This particular historical measurement was amd64 only. The current Docker
+workflow builds and runs the REST, persistent TeXpresso, raster, and WebSocket
+suites natively on both amd64 and arm64 before publication. The old image-size
+observation is not a release guarantee; inspect the published per-platform
+manifest and digest instead.
 
 **Recommendation: proceed with raster live preview.** The normal edit path retains TeXpresso's advantage by a wide margin (33 ms median edit-to-browser-ready PNG, below the 100 ms target), uses a narrow isolated adaptation, and has modest page payloads. The next milestone should design a private binary transport/revision contract and page-replacement semantics, not a public endpoint or frontend integration yet.
 

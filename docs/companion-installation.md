@@ -26,12 +26,14 @@ The direct Docker command is the simplest installation and does not require clon
 docker run -d \
   --name typr-server \
   --restart unless-stopped \
+  --user 1000:1000 \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
   --pids-limit 256 \
   --memory 2g \
+  --memory-swap 2g \
   --cpus 2 \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
@@ -42,6 +44,11 @@ The image allows the official Stable, Beta, and Development Typr origins plus th
 ```bash
 -e TYPR_COMPANION_ALLOWED_ORIGINS=https://your-typr.example
 ```
+
+The override replaces the defaults; include every exact Typr origin that should
+connect. Each value is only `scheme://host[:port]`, with no path or trailing
+slash. CORS is a browser control, not authentication, and origin-less trusted
+clients can still call the service.
 
 No environment variable or volume is required for normal browser-local projects. The server uses temporary per-request/per-session directories and removes them.
 
@@ -55,11 +62,17 @@ To make one trusted host directory available for explicit manual synchronization
 
 The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes or deletes one file at a time with ETags. Deleting a file never prunes its host directories. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher. The host kernel must support Landlock; the container runs a real launcher probe before listening and exits rather than advertising an unusable compiler sandbox. Unmapping the directory disables the capability without affecting browser-local projects.
 
-Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from the hosted HTTPS PWA because browsers block mixed content. Chromium browsers may also request Local Network Access permission; allow it for Typr when intentionally connecting to your Companion.
+Use a newly created dedicated directory, not `/`, `/mnt`, `/mnt/user`, a broad
+share, an appdata root, or a symlinked root. Grant UID 1000 access only to that
+directory. Browser-local Typr remains authoritative: the mapped directory is an
+explicit manual-sync target, not an automatic backup. A workspace API delete
+does delete the selected mapped file, so keep independent host backups.
+
+Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from an HTTPS Typr page because browsers block mixed content. Plain HTTP on a non-loopback LAN address also reduces secure-context/PWA features for a self-hosted Typr page. Use client-trusted HTTPS for cross-device operation; an untrusted certificate is insufficient until each browser trusts it. Chromium browsers may also request Local Network Access permission; allow it only for the intended Companion.
 
 ### Docker Compose
 
-The repository's [`compose.yaml`](../compose.yaml) uses the published stable image, loopback binding, restart policy, and `no-new-privileges` hardening. Download that one file or copy it into an otherwise empty directory, then run:
+The repository's [`compose.yaml`](../compose.yaml) uses the published stable image, loopback binding, non-root user, read-only root, bounded tmpfs, dropped capabilities, `no-new-privileges`, and PID/memory/CPU limits. Download that one file or copy it into an otherwise empty directory, then run:
 
 ```bash
 docker compose up -d
@@ -70,6 +83,20 @@ The production Compose file never builds from source. Contributors can instead u
 ```bash
 docker compose -f compose.dev.yaml up --build
 ```
+
+To enable one workspace, add the separate override and an absolute dedicated
+host path. The base Compose file remains volume-free:
+
+```bash
+export TYPR_COMPANION_WORKSPACE_DIR=/srv/typr/home-workspace
+export TYPR_COMPANION_WORKSPACE_ID=home-workspace
+docker compose -f compose.yaml -f compose.workspace.yaml up -d
+```
+
+The override uses long bind syntax and refuses to create a missing host path.
+Use the same `-f` arguments for updates, logs, and removal. Docker service names
+are not browser URLs: the browser must reach the published host address or its
+trusted HTTPS reverse-proxy name directly.
 
 ## Verify and diagnose
 
@@ -100,31 +127,36 @@ docker rm typr-server
 docker run -d \
   --name typr-server \
   --restart unless-stopped \
+  --user 1000:1000 \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
   --pids-limit 256 \
   --memory 2g \
+  --memory-swap 2g \
   --cpus 2 \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
 
 There is no self-updater inside the Companion and the PWA cannot mutate Docker. Docker/the host remains responsible for container lifecycle.
+Mapped-workspace users must include the same bind mount,
+`TYPR_COMPANION_WORKSPACE_ROOT`, and `TYPR_COMPANION_WORKSPACE_ID` arguments used
+for the original installation when recreating a direct-Docker container.
 
 ## Pin or roll back a version
 
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.1
+ghcr.io/max-prime-math/typr-server:0.1.2
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.1
+image: ghcr.io/max-prime-math/typr-server:0.1.2
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.
@@ -151,6 +183,8 @@ There is no Companion cache volume to remove and uninstalling the container does
 ## Security
 
 - Prefer `127.0.0.1:8484:8484` on a single machine. Cross-device access belongs only behind a trusted-LAN/VPN firewall and, for an HTTPS Typr origin, an HTTPS reverse proxy. Never publish it to the public internet.
+- Never use router port forwarding, a public tunnel, or a publicly reachable
+  reverse-proxy route for Companion. TLS does not add application authentication.
 - The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits.
 - It has no authentication and is intended for trusted, local documents.
 - Native TeX/MuPDF/TeXpresso parsers are not a complete hostile-code boundary. All people able to submit documents or use the mapped workspace must be mutually trusted.
@@ -161,7 +195,7 @@ There is no Companion cache volume to remove and uninstalling the container does
 - **Linux:** use Docker Engine. Native amd64 is the primary current development/runtime environment.
 - **Windows:** use Docker Desktop with the WSL2 backend. The image is Linux-based; no native Windows TeX setup is needed.
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
-- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). No volume is needed. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. The service is unauthenticated and must not be exposed publicly.
+- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. The service is unauthenticated and must not be exposed publicly.
 
 The GitHub workflow is configured to build and run the complete backend Docker suite natively on GitHub-hosted amd64 and arm64 runners. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
 

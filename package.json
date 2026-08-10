@@ -26,6 +26,8 @@
     "test": "vitest run",
     "test:unit": "vitest run src/companion-protocol typr-server",
     "test:companion:docker": "node scripts/test-companion-docker.mjs",
+    "test:unraid": "node scripts/validate-unraid-template.mjs",
+    "test:compose": "node scripts/test-companion-compose.mjs",
     "texpresso:poc": "node --experimental-strip-types typr-server/texpresso-poc.ts",
     "test:texpresso:poc": "node scripts/test-texpresso-poc-docker.mjs",
     "test:texpresso:render": "node scripts/test-texpresso-render-docker.mjs",

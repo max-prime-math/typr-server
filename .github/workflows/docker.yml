@@ -35,10 +35,15 @@ jobs:
         run: npm ci
 
       - name: Validate Unraid template
-        run: python -c "import xml.etree.ElementTree as ET; ET.parse('unraid/typr-companion.xml')"
+        run: npm run test:unraid
 
       - name: Validate Compose definitions
-        run: docker compose -f compose.yaml config && docker compose -f compose.dev.yaml config
+        env:
+          TYPR_COMPANION_WORKSPACE_DIR: /tmp/typr-companion-workspace-contract
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f compose.dev.yaml config --quiet
+          docker compose -f compose.yaml -f compose.workspace.yaml config --quiet
 
       - name: Typecheck
         run: npm run typecheck
@@ -109,6 +114,11 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           cache-from: type=gha,scope=typr-server-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=typr-server-${{ matrix.arch }}
+
+      - name: Test production Compose modes
+        env:
+          TYPR_COMPANION_IMAGE: typr-server:ci-${{ matrix.arch }}
+        run: npm run test:compose
 
       - name: Test REST startup and compile behavior
         env:

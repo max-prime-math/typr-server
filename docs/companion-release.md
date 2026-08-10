@@ -82,6 +82,8 @@ The next valid `vMAJOR.MINOR.PATCH` tag logs into both registries and pushes the
 - the template and icon URLs are available from the `main` branch;
 - the documented remote HTTPS connection has been tested on an Unraid host;
 - a public Unraid support topic or equivalent maintained support destination exists.
+- root [`ca_profile.xml`](../ca_profile.xml) has a real forum/support destination
+  and the portal's Validate and Scan actions pass.
 
 The template is not submitted automatically by the release workflow. Store submission is a separate maintainer action because it creates an ongoing support obligation.
 

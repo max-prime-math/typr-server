@@ -11,18 +11,22 @@
   <GitHub>https://github.com/max-prime-math/typr-server</GitHub>
   <ReadMe>https://github.com/max-prime-math/typr-server/blob/main/docs/companion-unraid.md</ReadMe>
   <Project>https://typr.ca</Project>
-  <Overview>Typr Companion provides native latexmk/pdfLaTeX compilation and experimental TeXpresso live preview for Typr. It stores no projects and needs no persistent volume. For a browser on another device, publish this service through an HTTPS reverse proxy and enter that URL in Typr Settings &gt; Editor &gt; Typr Companion.</Overview>
-  <Category>Productivity: Tools:</Category>
+  <Overview>Optional native LaTeX, TeXpresso, and scoped workspace service for Typr. Stateless by default; one dedicated workspace can be mapped explicitly. Trusted LAN/VPN use only; never expose it publicly.</Overview>
+  <Description>Typr Companion is installed separately from the browser-local Typr PWA. It runs native latexmk/pdfLaTeX and experimental TeXpresso behind a fail-closed Landlock launcher. Browser projects remain authoritative. Administrators may optionally map one exact read/write directory for explicit manual sync; no broad share or appdata root belongs here. The service is unauthenticated, so all users and documents must be trusted and it must never be exposed to the public Internet.</Description>
+  <Category>Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8484]/api/v1/status</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/max-prime-math/typr-server/main/unraid/typr-companion.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/max-prime-math/typr/main/public/icons/icon-512.png</Icon>
-  <ExtraParams>--restart=unless-stopped --security-opt=no-new-privileges:true</ExtraParams>
+  <ExtraParams>--restart=unless-stopped --user=1000:1000 --read-only --tmpfs=/tmp:rw,nosuid,nodev,noexec,size=536870912 --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=256 --memory=2g --memory-swap=2g --cpus=2</ExtraParams>
   <PostArgs/>
   <CPUset/>
-  <Date>2026-08-09</Date>
-  <Changes>2026-08-09: Initial Typr Companion template.</Changes>
+  <Date>2026-08-10</Date>
+  <Changes>2026-08-10: Match tested container hardening and add the optional exact-workspace configuration.</Changes>
   <Beta>False</Beta>
-  <Requires>Use only on a trusted LAN or VPN. Never expose this unauthenticated service to the public Internet. An HTTPS reverse proxy with WebSocket support is required when typr.ca runs in a browser on a different device.</Requires>
+  <Requires>Use only on a trusted LAN or private VPN. Never expose this unauthenticated service to the public Internet. Remote browser use requires a client-trusted HTTPS reverse proxy with WebSocket support and firewall/VPN restriction. The host kernel must support Landlock or the container fails closed.</Requires>
   <Config Name="Companion port" Target="8484" Default="8484" Mode="tcp" Description="Host port used by the reverse proxy and local status checks. Container port must remain 8484." Type="Port" Display="always" Required="true" Mask="false">8484</Config>
-  <Config Name="Allowed Typr origins" Target="TYPR_COMPANION_ALLOWED_ORIGINS" Default="https://typr.ca,https://beta.typr.ca,https://dev.typr.ca" Mode="" Description="Comma-separated exact browser origins allowed by CORS. Add a custom Typr deployment here if needed." Type="Variable" Display="advanced" Required="true" Mask="false">https://typr.ca,https://beta.typr.ca,https://dev.typr.ca</Config>
+  <Config Name="Allowed Typr origins" Target="TYPR_COMPANION_ALLOWED_ORIGINS" Default="https://typr.ca,https://beta.typr.ca,https://dev.typr.ca" Mode="" Description="Comma-separated exact browser origins, including scheme, host, and port with no path or trailing slash. Add the self-hosted Typr origin. CORS is not authentication." Type="Variable" Display="advanced" Required="true" Mask="false">https://typr.ca,https://beta.typr.ca,https://dev.typr.ca</Config>
+  <Config Name="Workspace directory" Target="/workspace" Default="" Mode="rw" Description="Optional one exact dedicated project directory. Never map /, /mnt, /mnt/user, a broad share, appdata root, symlinked root, or the Docker socket. UID 1000 needs read/write access." Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Workspace API root" Target="TYPR_COMPANION_WORKSPACE_ROOT" Default="" Mode="" Description="Set exactly /workspace only when Workspace directory is configured. Leave blank to disable the file API." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Workspace ID" Target="TYPR_COMPANION_WORKSPACE_ID" Default="unraid-workspace" Mode="" Description="Stable opaque letters/numbers/dot/underscore/hyphen identifier for browser bindings; never put a host path here. Ignored while the API root is blank." Type="Variable" Display="advanced" Required="false" Mask="false">unraid-workspace</Config>
 </Container>
