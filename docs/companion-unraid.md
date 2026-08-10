@@ -117,6 +117,31 @@ non-loopback LAN address is not a secure context and a self-hosted Typr page wil
 lose service-worker/PWA and filesystem-related features. A self-signed
 certificate must be trusted by every client before it is useful.
 
+### Private HTTPS with Tailscale Serve
+
+Install and connect the official Tailscale plugin on the Unraid **host**. Keep
+the Typr-Companion container's per-container **Use Tailscale** switch off. That
+Unraid feature injects a mounted startup hook which requires root privileges;
+Companion deliberately runs as UID 1000 with a read-only root, and its stateless
+fallback rejects unexpected mounts. Enabling the switch therefore causes a
+restart loop rather than a working tailnet endpoint.
+
+With Companion running normally on host port `8484`, use host-level Tailscale
+Serve instead:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8484
+tailscale serve status
+```
+
+Enter the resulting base URL, such as
+`https://UNRAID-NAME.TAILNET.ts.net:8443`, in Typr. Serve terminates trusted TLS
+and proxies both the HTTP API and WebSocket upgrade within the tailnet. The
+browser device must be connected to that tailnet and allowed by its access
+rules. Keep Tailscale **Funnel disabled**: Funnel would make this unauthenticated
+service public. If Typr itself uses a Tailscale HTTPS origin, add that exact
+scheme, hostname, and port to **Allowed Typr origins**.
+
 ## Connect Typr
 
 1. Open Typr in the browser that will use Companion.
@@ -140,7 +165,7 @@ native TeX behavior, change Repository to a complete version after it is
 published, for example:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.3
+ghcr.io/max-prime-math/typr-server:0.1.4
 ```
 
 Rollback uses the same field with the prior known-good version. Removing the

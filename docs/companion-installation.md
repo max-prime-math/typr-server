@@ -78,6 +78,13 @@ does delete the selected mapped file, so keep independent host backups.
 
 Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from an HTTPS Typr page because browsers block mixed content. Plain HTTP on a non-loopback LAN address also reduces secure-context/PWA features for a self-hosted Typr page. Use client-trusted HTTPS for cross-device operation; an untrusted certificate is insufficient until each browser trusts it. Chromium browsers may also request Local Network Access permission; allow it only for the intended Companion.
 
+On Unraid, use Tailscale on the host with Tailscale Serve when private tailnet
+HTTPS is desired. Do not enable Unraid's per-container **Use Tailscale** hook:
+the injected root-owned startup hook and mount are intentionally incompatible
+with this image's non-root, read-only, volume-free stateless boundary. Keep
+Tailscale Funnel disabled. The dedicated Unraid guide contains an exact Serve
+example.
+
 ### Docker Compose
 
 The repository's [`compose.yaml`](../compose.yaml) uses the published stable image, loopback binding, non-root user, read-only root, bounded tmpfs, dropped capabilities, `no-new-privileges`, and PID/memory/CPU limits. Download that one file or copy it into an otherwise empty directory, then run:
@@ -158,13 +165,13 @@ for the original installation when recreating a direct-Docker container.
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.3
+ghcr.io/max-prime-math/typr-server:0.1.4
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.3
+image: ghcr.io/max-prime-math/typr-server:0.1.4
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.
@@ -203,7 +210,7 @@ There is no Companion cache volume to remove and uninstalling the container does
 - **Linux:** use Docker Engine. Native amd64 is the primary current development/runtime environment.
 - **Windows:** use Docker Desktop with the WSL2 backend. The image is Linux-based; no native Windows TeX setup is needed.
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
-- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. The service is unauthenticated and must not be exposed publicly.
+- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. Host-level Tailscale Serve is supported; the per-container Tailscale hook is not. The service is unauthenticated and must not be exposed publicly.
 
 The GitHub workflow is configured to build and run the complete backend Docker suite natively on GitHub-hosted amd64 and arm64 runners. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
 

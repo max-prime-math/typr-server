@@ -42,7 +42,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 ```json
 {
   "protocolVersion": 1,
-  "serverVersion": "0.1.3-dev",
+  "serverVersion": "0.1.4-dev",
   "capabilities": {
     "compile": { "engines": ["pdflatex"] },
     "filesystem": { "projectStorage": false },

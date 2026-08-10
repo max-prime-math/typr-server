@@ -8,6 +8,9 @@ The service is deliberately unauthenticated. Run it only on a trusted machine,
 LAN, or VPN; never expose it to the public Internet. Browser access from another
 device normally requires an HTTPS reverse proxy with WebSocket support because
 an HTTPS Typr page cannot call a plain HTTP/WS Companion.
+On Unraid, use host-level Tailscale Serve for private tailnet HTTPS; the
+per-container **Use Tailscale** injection is incompatible with Companion's
+non-root, read-only stateless boundary. Never enable Tailscale Funnel.
 
 Browser-local storage remains Typr's default. The file API is disabled unless
 an administrator explicitly maps one trusted directory; native compiler
