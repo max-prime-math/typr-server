@@ -210,7 +210,15 @@ try {
   await assertMissingHostPathFailsClosed();
   smoke({ label: "stateless" });
   smoke({ label: "workspace", workspace: true });
-  assert.equal(await readFile(path.join(workspaceDir, "compose.txt"), "utf8"), "compose smoke\n");
+  const persistedContent = run("docker", [
+    "run", "--rm", "--network", "none", "--read-only",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+    "--user", "1000:1000",
+    "--mount", `type=bind,src=${workspaceDir},dst=/workspace,readonly`,
+    "--entrypoint", "node", image,
+    "-e", "process.stdout.write(require('node:fs').readFileSync('/workspace/compose.txt','utf8'))"
+  ]).stdout;
+  assert.equal(persistedContent, "compose smoke\n");
 } finally {
   await rm(workspaceDir, { recursive: true, force: true });
 }
