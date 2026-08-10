@@ -140,7 +140,7 @@ native TeX behavior, change Repository to a complete version after it is
 published, for example:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.2
+ghcr.io/max-prime-math/typr-server:0.1.3
 ```
 
 Rollback uses the same field with the prior known-good version. Removing the

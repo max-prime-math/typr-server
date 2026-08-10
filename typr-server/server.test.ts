@@ -30,7 +30,7 @@ describe("typr-server Companion API", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
     await expect(response.json()).resolves.toEqual({
       protocolVersion: TYPR_COMPANION_PROTOCOL_VERSION,
-      serverVersion: "0.1.2-dev",
+      serverVersion: "0.1.3-dev",
       capabilities: {
         compile: { engines: ["pdflatex"] },
         filesystem: { projectStorage: false },

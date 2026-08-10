@@ -158,13 +158,13 @@ for the original installation when recreating a direct-Docker container.
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.2
+ghcr.io/max-prime-math/typr-server:0.1.3
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.2
+image: ghcr.io/max-prime-math/typr-server:0.1.3
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.

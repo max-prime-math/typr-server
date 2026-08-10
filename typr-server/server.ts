@@ -27,7 +27,7 @@ import { isBase64 } from "./base64.ts";
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
-const DEFAULT_SERVER_VERSION = "0.1.2-dev";
+const DEFAULT_SERVER_VERSION = "0.1.3-dev";
 const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
 const MAX_PROJECT_FILES = 512;
 const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
