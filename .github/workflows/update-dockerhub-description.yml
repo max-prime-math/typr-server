@@ -1,0 +1,23 @@
+name: Update Docker Hub description
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    if: vars.DOCKERHUB_NAMESPACE != '' && vars.DOCKERHUB_USERNAME != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Update Companion Docker Hub description
+        uses: peter-evans/dockerhub-description@e98e4d1628a5f3be2be7c231e50981aee98723ae # v4.0.0
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ vars.DOCKERHUB_NAMESPACE }}/typr-server
+          short-description: Typr Companion compile and live-preview service for self-hosted Typr.
+          readme-filepath: docs/dockerhub-overview.md
