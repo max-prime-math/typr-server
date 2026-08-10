@@ -62,6 +62,14 @@ To make one trusted host directory available for explicit manual synchronization
 
 The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes or deletes one file at a time with ETags. Deleting a file never prunes its host directories. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher. The host kernel must support Landlock; the container runs a real launcher probe before listening and exits rather than advertising an unusable compiler sandbox. Unmapping the directory disables the capability without affecting browser-local projects.
 
+`TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1` is an explicit compatibility
+escape hatch for volume-free hosts whose kernels do not provide Landlock, such
+as tested stock Unraid configurations. It permits only stateless compilation of
+mutually trusted documents and logs a warning. It never permits a mapped
+workspace: setting `TYPR_COMPANION_WORKSPACE_ROOT` still requires a successful
+sandbox probe and otherwise fails startup. Normal Docker and Compose examples do
+not enable this fallback.
+
 Use a newly created dedicated directory, not `/`, `/mnt`, `/mnt/user`, a broad
 share, an appdata root, or a symlinked root. Grant UID 1000 access only to that
 directory. Browser-local Typr remains authoritative: the mapped directory is an
@@ -185,7 +193,7 @@ There is no Companion cache volume to remove and uninstalling the container does
 - Prefer `127.0.0.1:8484:8484` on a single machine. Cross-device access belongs only behind a trusted-LAN/VPN firewall and, for an HTTPS Typr origin, an HTTPS reverse proxy. Never publish it to the public internet.
 - Never use router port forwarding, a public tunnel, or a publicly reachable
   reverse-proxy route for Companion. TLS does not add application authentication.
-- The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits.
+- The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox by default, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits. The explicit stateless-only Unraid fallback is weaker, must remain volume-free, and is for trusted documents only.
 - It has no authentication and is intended for trusted, local documents.
 - Native TeX/MuPDF/TeXpresso parsers are not a complete hostile-code boundary. All people able to submit documents or use the mapped workspace must be mutually trusted.
 - No extra Linux capabilities or privileged mode are required.

@@ -1,21 +1,21 @@
 import { createTyprServer, shutdownTyprServer } from "./server.ts";
 import { WorkspaceStore } from "./workspaceStore.ts";
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
-import { probeNativeSandbox } from "./sandboxProbe.ts";
+import { parseUnsandboxedStatelessOptIn, resolveNativeSandbox } from "./sandboxPolicy.ts";
 
 const port = parsePort(process.env.TYPR_COMPANION_PORT, 8484);
 const host = process.env.TYPR_COMPANION_HOST ?? "127.0.0.1";
 const configuredVersion = process.env.TYPR_COMPANION_VERSION?.trim();
 const workspaceRoot = process.env.TYPR_COMPANION_WORKSPACE_ROOT?.trim();
-const sandboxExecutable = process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE?.trim();
-if (workspaceRoot && !sandboxExecutable) {
-  throw new Error("A mapped workspace requires TYPR_COMPANION_SANDBOX_EXECUTABLE; refusing to expose it beside unsandboxed native compilers.");
-}
-if (sandboxExecutable) {
-  await access(sandboxExecutable, constants.X_OK);
-  await probeNativeSandbox(sandboxExecutable);
-}
+const sandboxExecutable = await resolveNativeSandbox({
+  allowUnsandboxedStateless: parseUnsandboxedStatelessOptIn(
+    process.env.TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS
+  ),
+  sandboxExecutable: process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE,
+  workspaceRoot,
+  onFallback: (message) => console.warn(message)
+});
+if (sandboxExecutable) process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE = sandboxExecutable;
+else delete process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE;
 const workspace = workspaceRoot ? await WorkspaceStore.open(workspaceRoot, {
   workspaceId: process.env.TYPR_COMPANION_WORKSPACE_ID?.trim() || "default"
 }) : undefined;

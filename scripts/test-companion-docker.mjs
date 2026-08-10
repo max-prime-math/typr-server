@@ -22,6 +22,9 @@ try {
   }
 
   await assertBrokenSandboxFailsClosed(image);
+  await assertExplicitStatelessFallback(image);
+  await assertFallbackWorkspaceFailsClosed(image);
+  await assertFallbackDataMountFailsClosed(image);
 
   workspaceRoot = await mkdtemp(resolve(tmpdir(), "typr-companion-docker-workspace-"));
   // CI runner UIDs differ from the image's non-root UID. Make the hostile
@@ -341,6 +344,115 @@ async function assertBrokenSandboxFailsClosed(imageName) {
     assert(logs.includes("Native compiler sandbox probe failed"), "Failed startup must identify the native sandbox probe.");
   } finally {
     await run("docker", ["rm", "--force", id], { allowFailure: true });
+  }
+}
+
+async function assertExplicitStatelessFallback(imageName) {
+  const id = (await capture("docker", [
+    "create",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--pids-limit", "256",
+    "--memory", "2g",
+    "--cpus", "2",
+    "--publish", "127.0.0.1::8484",
+    "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
+    "--env", "TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1",
+    imageName
+  ])).trim();
+  try {
+    await run("docker", ["start", id]);
+    const portOutput = await capture("docker", ["port", id, "8484/tcp"]);
+    const baseUrl = `http://127.0.0.1:${parsePublishedPort(portOutput)}`;
+    const status = await waitForStatus(baseUrl);
+    assert(status.capabilities?.filesystem?.projectStorage === false,
+      "The explicit stateless fallback must not advertise mapped workspace storage.");
+    const result = await compile(baseUrl, [
+      textFile("main.tex", "\\documentclass{article}\n\\begin{document}\nTrusted stateless fallback.\n\\end{document}\n")
+    ]);
+    assertPdf(result, "an explicit volume-free stateless fallback compile");
+    const logs = await captureCombined("docker", ["logs", id]);
+    assert(logs.includes("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1"),
+      "The stateless fallback must log its explicit opt-in.");
+    assert(logs.includes("Use trusted documents only"),
+      "The stateless fallback must log its trusted-document boundary.");
+  } finally {
+    await run("docker", ["rm", "--force", id], { allowFailure: true });
+  }
+}
+
+async function assertFallbackWorkspaceFailsClosed(imageName) {
+  const root = await mkdtemp(resolve(tmpdir(), "typr-companion-fallback-workspace-"));
+  await chmod(root, 0o777);
+  const id = (await capture("docker", [
+    "create",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--mount", `type=bind,src=${root},dst=/workspace`,
+    "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
+    "--env", "TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1",
+    "--env", "TYPR_COMPANION_WORKSPACE_ROOT=/workspace",
+    imageName
+  ])).trim();
+  try {
+    await run("docker", ["start", id]);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const running = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}}"])) .trim();
+      if (running === "false") break;
+      await delay(100);
+    }
+    const state = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}} {{.State.ExitCode}}"])) .trim();
+    assert(state !== "true 0" && state.startsWith("false "),
+      `A mapped workspace must fail even with the stateless fallback opt-in; received ${state}.`);
+    const logs = await captureCombined("docker", ["logs", id]);
+    assert(logs.includes("Native compiler sandbox probe failed"),
+      "Mapped-workspace refusal must identify the failed native sandbox probe.");
+    assert(!logs.includes("continuing only because"),
+      "Mapped-workspace startup must never enter the stateless fallback.");
+  } finally {
+    await run("docker", ["rm", "--force", id], { allowFailure: true });
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function assertFallbackDataMountFailsClosed(imageName) {
+  const root = await mkdtemp(resolve(tmpdir(), "typr-companion-fallback-data-"));
+  await chmod(root, 0o777);
+  const id = (await capture("docker", [
+    "create",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--mount", `type=bind,src=${root},dst=/data`,
+    "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
+    "--env", "TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1",
+    imageName
+  ])).trim();
+  try {
+    await run("docker", ["start", id]);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const running = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}}"])) .trim();
+      if (running === "false") break;
+      await delay(100);
+    }
+    const state = (await capture("docker", ["inspect", id, "--format", "{{.State.Running}} {{.State.ExitCode}}"])) .trim();
+    assert(state !== "true 0" && state.startsWith("false "),
+      `A data mount must fail even when the workspace API is unset; received ${state}.`);
+    const logs = await captureCombined("docker", ["logs", id]);
+    assert(logs.includes("Stateless fallback refuses unexpected mount"),
+      "The stateless fallback must identify an unexpected data mount.");
+    assert(!logs.includes("continuing only because"),
+      "A mounted fallback must fail before logging that it will continue.");
+  } finally {
+    await run("docker", ["rm", "--force", id], { allowFailure: true });
+    await rm(root, { recursive: true, force: true });
   }
 }
 

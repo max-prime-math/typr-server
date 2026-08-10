@@ -29,7 +29,7 @@ Types do not validate JSON received over HTTP. Typr has no established runtime s
 latexmk -norc -pdf -no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error main.tex
 ```
 
-When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, separate 1 MiB process-output and 1 MiB returned-log caps, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. It probes that policy before listening and therefore requires a Linux kernel with usable Landlock support. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data.
+When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, separate 1 MiB process-output and 1 MiB returned-log caps, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. It probes that policy before listening and therefore requires a Linux kernel with usable Landlock support by default. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data. An explicit stateless-only compatibility opt-in may continue without Landlock when no host workspace is mounted; this weaker mode is for mutually trusted documents and never enables mapped storage.
 
 Start it from the repository root:
 
@@ -42,7 +42,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 ```json
 {
   "protocolVersion": 1,
-  "serverVersion": "0.1.2-dev",
+  "serverVersion": "0.1.3-dev",
   "capabilities": {
     "compile": { "engines": ["pdflatex"] },
     "filesystem": { "projectStorage": false },
@@ -110,6 +110,7 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
 | `TYPR_COMPANION_WORKSPACE_ID` | `default` | Opaque stable identity used by browser bindings; it is not a host path. |
 | `TYPR_COMPANION_SANDBOX_EXECUTABLE` | `/usr/local/bin/typr-native-sandbox` | Fail-closed native compiler launcher. A mapped workspace is refused if this is unavailable. |
+| `TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS` | unset | Set exactly `1` only to permit a warned, volume-free trusted-document fallback when the launcher probe fails. Ignored as an escape hatch when a workspace is mapped; that case still fails closed. |
 
 Node is the container's main process; no shell wrapper is used. It handles normal `SIGTERM`/`SIGINT` shutdown by stopping new HTTP work and terminating active LaTeX compiler process groups before the listener closes. The image runs as the non-root `node` user. `/tmp` remains writable for request-local compiler directories.
 
@@ -133,7 +134,7 @@ The selected Node base image and Debian packages have `linux/amd64` and `linux/a
 
 Node, TeX Live, `latexmk`, and their system dependencies are Companion **container toolchain** components: they are versioned by the Dockerfile and supplied by the image. Future document-specific package caches, fonts, and persistent caches are separate project-dependency concerns. No package-management or persistence API is provided here, so adding such a capability later does not need to depend on a host package manager such as apt, Homebrew, winget, or pacman.
 
-The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. Operate only on a trusted LAN/VPN, never expose the port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Authentication and package-installation APIs are deliberately not implemented. The private experimental WebSocket does not change this security model.
+The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. The explicit stateless fallback has no Landlock confinement and is therefore weaker even though it remains non-root, volume-free, read-only, capability-free, and resource-limited. Operate only on a trusted LAN/VPN, never expose the port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Authentication and package-installation APIs are deliberately not implemented. The private experimental WebSocket does not change this security model.
 
 Future images may add optional capabilities such as Typst, LSP servers, or Git tooling. TeXpresso is present only as the internal experiment documented below; it is not part of the public Companion protocol or capability advertisement.
 

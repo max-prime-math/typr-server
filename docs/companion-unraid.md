@@ -15,6 +15,12 @@ Internet**, through router port forwarding, a public tunnel, or a public reverse
 proxy. TLS improves transport and browser compatibility; it does not add
 application authentication.
 
+Stock Unraid kernels may not provide Landlock. This template therefore opts into
+a narrowly limited fallback: Companion may run without its native filesystem
+sandbox only while it is stateless and has no host workspace mounted. Keep this
+mode limited to mutually trusted documents. If any workspace is configured,
+Companion still requires Landlock and refuses startup when it is unavailable.
+
 ## Install the template
 
 Until the template is listed in Community Applications, install it as a user
@@ -35,18 +41,25 @@ template:
 6. Leave **Workspace directory** and **Workspace API root** blank for the
    default stateless deployment. The prefilled Workspace ID is ignored while
    the root is blank.
-7. Apply the template and wait for a healthy container.
+7. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
+   This does not permit a mapped workspace without Landlock.
+8. Apply the template and wait for a healthy container.
 
 The template enforces UID 1000, non-privileged operation, dropped capabilities,
 no-new-privileges, a read-only root, 512 MiB no-exec tmpfs, 256 PIDs, 2 GiB
 memory/swap, and two CPUs. The image probes its Landlock launcher before
-listening and fails closed if the Unraid kernel cannot enforce the compiler
-filesystem boundary. Actual kernel compatibility remains part of real-host
-validation.
+listening. When that probe fails, the explicit template opt-in permits only the
+volume-free stateless fallback and logs a prominent trusted-document warning.
+Without that opt-in, or whenever a workspace is mapped, startup fails closed.
 
 ## Optional mapped workspace
 
 Configure all three advanced workspace fields together:
+
+This mode requires an Unraid kernel with working Landlock support. Stock kernels
+that return `Landlock is unavailable` cannot safely enable the mapped workspace;
+leave the directory and API root blank. The stateless fallback never bypasses
+this check.
 
 - **Workspace directory:** one newly created dedicated directory, mounted RW to
   `/workspace`.
@@ -74,8 +87,9 @@ curl -fsS http://127.0.0.1:8484/api/v1/status
 
 The response reports protocol version 1, native compile capabilities, and
 `projectStorage: false` unless all mapped-workspace fields are valid. The WebUI
-link opens the same status response. Startup failures are visible in the
-container log.
+link opens the same status response. In fallback mode, the container log states
+that the native filesystem sandbox is unavailable and that trusted documents are
+required. Startup failures are visible in the same log.
 
 ## Add trusted HTTPS
 
