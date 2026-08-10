@@ -47,6 +47,9 @@ RUN git clone https://github.com/let-def/texpresso.git texpresso \
     && git apply /tmp/texpresso-page-export.patch \
     && make all
 
+COPY docker/typr-native-sandbox.c /tmp/typr-native-sandbox.c
+RUN cc -O2 -Wall -Wextra -Werror -o /opt/typr-native-sandbox /tmp/typr-native-sandbox.c
+
 FROM ${NODE_IMAGE} AS runtime
 ARG TEXPRESSO_REV
 ARG WS_VERSION
@@ -102,6 +105,7 @@ RUN apt-get update \
 
 COPY --from=texpresso-build /opt/texpresso/build/texpresso /usr/local/bin/texpresso
 COPY --from=texpresso-build /opt/texpresso/build/texpresso-xetex /usr/local/bin/texpresso-xetex
+COPY --from=texpresso-build /opt/typr-native-sandbox /usr/local/bin/typr-native-sandbox
 
 WORKDIR /app
 
@@ -123,6 +127,7 @@ ENV NODE_ENV=production \
     TYPR_COMPANION_VERSION=${COMPANION_VERSION} \
     TYPR_COMPANION_HOST=0.0.0.0 \
     TYPR_COMPANION_PORT=8484 \
+    TYPR_COMPANION_SANDBOX_EXECUTABLE=/usr/local/bin/typr-native-sandbox \
     TYPR_COMPANION_ALLOWED_ORIGINS=https://typr.ca,https://beta.typr.ca,https://dev.typr.ca,http://localhost:5173,http://127.0.0.1:5173,http://[::1]:5173
 
 USER node

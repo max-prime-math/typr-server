@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 import {
@@ -8,6 +8,7 @@ import {
   type TexpressoPosition,
   type TexpressoRange
 } from "../src/companion-protocol/texpresso.ts";
+import { prepareCompilerEnvironment, spawnSandboxed } from "./nativeProcess.ts";
 
 export {
   DEFAULT_TEXPRESSO_RENDER_DPI,
@@ -154,26 +155,27 @@ export class TexpressoSession {
       throw new Error("The TeXpresso session main file must be present in its virtual filesystem.");
     }
 
-    const child = spawn(
+    const child = spawnSandboxed(
       executable,
       ["-json", "-lines", "-texlive", "-stream", options.mainFilePath],
-      {
-        cwd: options.projectRoot,
-        detached: process.platform !== "win32",
-        env: { ...process.env, SDL_VIDEODRIVER: process.env.SDL_VIDEODRIVER ?? "dummy" },
-        stdio: "pipe"
-      }
+      options.projectRoot,
+      await prepareCompilerEnvironment(options.projectRoot)
     );
     const session = new TexpressoSession(child, options.projectRoot, timeoutMs, options.files);
 
     // -stream starts paused. Register and populate every source buffer before
     // resuming, which is TeXpresso's documented deterministic startup flow.
-    for (const file of options.files) session.send(["register", session.commandPath(file.path)]);
-    for (const file of options.files) session.send(["open", session.commandPath(file.path), file.content]);
-    const initialFlush = session.flushCount;
-    session.send(["resume"]);
-    await session.waitForFlush(initialFlush);
-    return session;
+    try {
+      for (const file of options.files) session.send(["register", session.commandPath(file.path)]);
+      for (const file of options.files) session.send(["open", session.commandPath(file.path), file.content]);
+      const initialFlush = session.flushCount;
+      session.send(["resume"]);
+      await session.waitForFlush(initialFlush);
+      return session;
+    } catch (error) {
+      await session.close();
+      throw error;
+    }
   }
 
   /** Replaces text using TeXpresso's native LSP-style UTF-16 `change-range` command. */
@@ -342,6 +344,7 @@ export class TexpressoSession {
         reject,
         timeout: setTimeout(() => {
           this.flushWaiters.delete(waiter);
+          void this.close();
           reject(new Error(`Timed out waiting for TeXpresso flush after ${this.timeoutMs} ms. ${this.stderrText()}`));
         }, this.timeoutMs)
       };
@@ -456,6 +459,7 @@ export class TexpressoSession {
         reject,
         timeout: setTimeout(() => {
           this.pageCountWaiters.delete(waiter);
+          void this.close();
           reject(new Error(`Timed out waiting for TeXpresso page count after ${this.timeoutMs} ms. ${this.stderrText()}`));
         }, this.timeoutMs)
       };
@@ -473,6 +477,7 @@ export class TexpressoSession {
         reject,
         timeout: setTimeout(() => {
           this.pageImageWaiters.delete(waiter);
+          void this.close();
           reject(new Error(`Timed out waiting for TeXpresso page ${page} after ${this.timeoutMs} ms. ${this.stderrText()}`));
         }, this.timeoutMs)
       };

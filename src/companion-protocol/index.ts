@@ -16,8 +16,13 @@ export const TYPR_COMPANION_API_V1_PREFIX = "/api/v1";
 /** Shared HTTP route names. This module does not perform HTTP requests. */
 export const TYPR_COMPANION_ROUTES = {
   status: `${TYPR_COMPANION_API_V1_PREFIX}/status`,
-  compile: `${TYPR_COMPANION_API_V1_PREFIX}/compile`
+  compile: `${TYPR_COMPANION_API_V1_PREFIX}/compile`,
+  workspaceFiles: `${TYPR_COMPANION_API_V1_PREFIX}/workspace/files`,
+  workspaceFile: `${TYPR_COMPANION_API_V1_PREFIX}/workspace/file`
 } as const;
+
+/** Required on workspace mutations. It prevents browser-simple cross-site writes. */
+export const TYPR_WORKSPACE_MUTATION_HEADER = "X-Typr-Workspace-Mutation";
 
 /**
  * Engines known to the first version of the contract. The string extension
@@ -37,9 +42,45 @@ export interface CompileCapability {
   engines: CompileEngine[];
 }
 
-export interface FilesystemCapability {
-  /** Whether persistent Companion-side project storage is available. */
-  projectStorage: boolean;
+export type FilesystemCapability =
+  | {
+      projectStorage: false;
+    }
+  | {
+      projectStorage: true;
+      workspaceApiVersion: 1;
+      workspaceId: string;
+      writable: true;
+      limits: WorkspaceLimits;
+    };
+
+export interface WorkspaceLimits {
+  maxFileBytes: number;
+  maxEntries: number;
+  maxWorkspaceBytes: number;
+}
+
+export interface WorkspaceFileMetadata {
+  path: string;
+  size: number;
+  modifiedAt: number;
+  /** Exact quoted strong HTTP ETag, ready for If-Match. */
+  etag: string;
+}
+
+export interface WorkspaceFileListResponse {
+  workspaceId: string;
+  files: WorkspaceFileMetadata[];
+}
+
+export interface WorkspaceFileResponse extends WorkspaceFileMetadata {
+  encoding: "base64";
+  content: string;
+}
+
+export interface WorkspaceFileWriteRequest {
+  encoding: "base64";
+  content: string;
 }
 
 export interface LspCapability {

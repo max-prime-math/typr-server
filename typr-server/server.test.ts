@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
-import { TYPR_COMPANION_PROTOCOL_VERSION } from "../src/companion-protocol/index.ts";
+import {
+  TYPR_COMPANION_PROTOCOL_VERSION,
+  TYPR_COMPANION_ROUTES,
+  TYPR_WORKSPACE_MUTATION_HEADER
+} from "../src/companion-protocol/index.ts";
 import { createTyprServer, hostHasPdflatex, materializeProjectFiles } from "./server.ts";
+import { WorkspaceStore } from "./workspaceStore.ts";
 
 const servers: Server[] = [];
+const workspaceRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => closeServer(server)));
+  await Promise.all(workspaceRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("typr-server Companion API", () => {
@@ -61,6 +68,137 @@ describe("typr-server Companion API", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://typr.ca");
     expect(response.headers.get("access-control-allow-private-network")).toBe("true");
+  });
+
+  it("advertises a configured mapped workspace and its limits", async () => {
+    const workspace = await createWorkspace("primary-workspace");
+    const baseUrl = await startServer(createTyprServer({
+      isPdflatexAvailable: async () => false,
+      workspace
+    }));
+
+    const response = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.status}`);
+    await expect(response.json()).resolves.toMatchObject({
+      capabilities: {
+        filesystem: {
+          projectStorage: true,
+          workspaceApiVersion: 1,
+          workspaceId: "primary-workspace",
+          writable: true,
+          limits: {
+            maxFileBytes: 16 * 1024 * 1024,
+            maxEntries: 4096,
+            maxWorkspaceBytes: 256 * 1024 * 1024
+          }
+        }
+      }
+    });
+  });
+
+  it("supports conditional create, list, read, update, and delete", async () => {
+    const workspace = await createWorkspace();
+    const baseUrl = await startServer(createTyprServer({ workspace }));
+    const fileUrl = `${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=chapters%2Fone.txt`;
+
+    const created = await fetch(fileUrl, {
+      method: "PUT",
+      headers: workspaceHeaders({ "If-None-Match": "*" }),
+      body: JSON.stringify({ encoding: "base64", content: Buffer.from("first").toString("base64") })
+    });
+    expect(created.status).toBe(201);
+    const firstEtag = created.headers.get("etag")!;
+    expect(firstEtag).toMatch(/^"sha256-/u);
+
+    const listed = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFiles}`);
+    await expect(listed.json()).resolves.toMatchObject({
+      files: [{ path: "chapters/one.txt", size: 5, etag: firstEtag }]
+    });
+    const read = await fetch(fileUrl);
+    expect(read.headers.get("etag")).toBe(firstEtag);
+    await expect(read.json()).resolves.toMatchObject({
+      path: "chapters/one.txt",
+      encoding: "base64",
+      content: Buffer.from("first").toString("base64")
+    });
+
+    const stale = await fetch(fileUrl, {
+      method: "PUT",
+      headers: workspaceHeaders({ "If-Match": '"stale"' }),
+      body: JSON.stringify({ encoding: "base64", content: Buffer.from("bad").toString("base64") })
+    });
+    expect(stale.status).toBe(412);
+    const updated = await fetch(fileUrl, {
+      method: "PUT",
+      headers: workspaceHeaders({ "If-Match": firstEtag }),
+      body: JSON.stringify({ encoding: "base64", content: Buffer.from("second").toString("base64") })
+    });
+    expect(updated.status).toBe(200);
+    const secondEtag = updated.headers.get("etag")!;
+    expect(secondEtag).not.toBe(firstEtag);
+
+    const deleted = await fetch(fileUrl, {
+      method: "DELETE",
+      headers: workspaceHeaders({ "If-Match": secondEtag })
+    });
+    expect(deleted.status).toBe(204);
+    expect((await workspace.list()).files).toEqual([]);
+  });
+
+  it("requires a non-simple mutation header and exact write preconditions", async () => {
+    const baseUrl = await startServer(createTyprServer({ workspace: await createWorkspace() }));
+    const fileUrl = `${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`;
+    const body = JSON.stringify({ encoding: "base64", content: "b2s=" });
+
+    const missingIntent = await fetch(fileUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-None-Match": "*" },
+      body
+    });
+    expect(missingIntent.status).toBe(400);
+    const missingPrecondition = await fetch(fileUrl, {
+      method: "PUT",
+      headers: workspaceHeaders(),
+      body
+    });
+    expect(missingPrecondition.status).toBe(428);
+    const both = await fetch(fileUrl, {
+      method: "PUT",
+      headers: workspaceHeaders({ "If-None-Match": "*", "If-Match": '"sha256-value"' }),
+      body
+    });
+    expect(both.status).toBe(428);
+  });
+
+  it("rejects unapproved browser origins before touching the workspace", async () => {
+    const workspace = await createWorkspace();
+    const baseUrl = await startServer(createTyprServer({ workspace }));
+    const response = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=blocked.txt`, {
+      method: "PUT",
+      headers: workspaceHeaders({ Origin: "https://attacker.example", "If-None-Match": "*" }),
+      body: JSON.stringify({ encoding: "base64", content: "bm8=" })
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect((await workspace.list()).files).toEqual([]);
+  });
+
+  it("keeps workspace routes unavailable when no mapped root is configured", async () => {
+    const baseUrl = await startServer(createTyprServer());
+    const response = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFiles}`);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "workspace-disabled" } });
+  });
+
+  it("rejects decoded traversal and duplicate path query parameters", async () => {
+    const root = await createWorkspaceRoot();
+    const baseUrl = await startServer(createTyprServer({ workspace: await WorkspaceStore.open(root) }));
+    const traversal = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=%2e%2e%2Fsecret`);
+    expect(traversal.status).toBe(400);
+    const duplicate = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=a&path=b`);
+    expect(duplicate.status).toBe(400);
+    await expect(readdir(root)).resolves.toEqual([]);
   });
 
   it("rejects malformed compile payloads", async () => {
@@ -210,4 +348,22 @@ function postJson(baseUrl: string, body: unknown): Promise<Response> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+}
+
+async function createWorkspace(workspaceId = "test-workspace"): Promise<WorkspaceStore> {
+  return WorkspaceStore.open(await createWorkspaceRoot(), { workspaceId });
+}
+
+async function createWorkspaceRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "typr-server-workspace-api-test-"));
+  workspaceRoots.push(root);
+  return root;
+}
+
+function workspaceHeaders(additional: Record<string, string> = {}): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    [TYPR_WORKSPACE_MUTATION_HEADER]: "1",
+    ...additional
+  };
 }

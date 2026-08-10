@@ -4,7 +4,7 @@ title: Install Typr Companion
 
 # Install Typr Companion
 
-Typr Companion supplies native `latexmk`/pdfLaTeX compilation and the experimental TeXpresso live preview to the Typr PWA. It runs separately from the PWA and does not store projects. The official image is:
+Typr Companion supplies native `latexmk`/pdfLaTeX compilation, an optional tightly scoped mapped workspace, and the experimental TeXpresso live preview to the Typr PWA. It runs separately from the PWA. Browser-local storage remains Typr's default; no workspace is exposed unless an administrator maps one. The official image is:
 
 ```text
 ghcr.io/max-prime-math/typr-server
@@ -14,7 +14,7 @@ ghcr.io/max-prime-math/typr-server
 
 - Docker Engine on Linux, or Docker Desktop on Windows/macOS.
 - A `linux/amd64` or `linux/arm64` Docker host.
-- Typr and the Companion should be used on the same trusted machine. The browser connects to host loopback at port 8484.
+- Typr and the Companion must be used on one trusted machine, a trusted LAN, or a private VPN. They are not public-internet services.
 
 Windows uses Docker Desktop with its WSL2 backend, macOS uses Docker Desktop, and Linux uses Docker Engine. Native Windows and macOS Companion packages are intentionally not required.
 
@@ -27,6 +27,11 @@ docker run -d \
   --name typr-server \
   --restart unless-stopped \
   --security-opt no-new-privileges:true \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
+  --pids-limit 256 \
+  --memory 2g \
+  --cpus 2 \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
@@ -37,7 +42,17 @@ The image allows the official Stable, Beta, and Development Typr origins plus th
 -e TYPR_COMPANION_ALLOWED_ORIGINS=https://your-typr.example
 ```
 
-No environment variable or volume is required for the official Typr PWA. The server uses temporary per-request/per-session directories and removes them; there is currently no safe, meaningful cache directory to persist and user projects are never mounted or stored.
+No environment variable or volume is required for normal browser-local projects. The server uses temporary per-request/per-session directories and removes them.
+
+To make one trusted host directory available for explicit manual synchronization, add exactly one bind mount and stable opaque ID:
+
+```bash
+--mount type=bind,src=/srv/typr-workspace,dst=/workspace \
+-e TYPR_COMPANION_WORKSPACE_ROOT=/workspace \
+-e TYPR_COMPANION_WORKSPACE_ID=home-workspace
+```
+
+The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes one file at a time with ETags. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher. Unmapping the directory disables the capability without affecting browser-local projects.
 
 Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another HTTPS URL, open **Settings → Editor → Typr Companion**, enter the URL, and apply it. The selection is stored in that browser. A remote HTTP URL cannot be used from the hosted HTTPS PWA because browsers block mixed content. Chromium browsers may also request Local Network Access permission; allow it for Typr when intentionally connecting to your Companion.
 
@@ -85,6 +100,11 @@ docker run -d \
   --name typr-server \
   --restart unless-stopped \
   --security-opt no-new-privileges:true \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
+  --pids-limit 256 \
+  --memory 2g \
+  --cpus 2 \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
@@ -128,10 +148,10 @@ There is no Companion cache volume to remove and uninstalling the container does
 
 ## Security
 
-- Keep `127.0.0.1:8484:8484`; do not publish port 8484 on `0.0.0.0` or a LAN/public interface.
-- The container runs as a non-root user, has an origin allowlist, and is compatible with `no-new-privileges`.
+- Prefer `127.0.0.1:8484:8484` on a single machine. Cross-device access belongs only behind a trusted-LAN/VPN firewall and, for an HTTPS Typr origin, an HTTPS reverse proxy. Never publish it to the public internet.
+- The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits.
 - It has no authentication and is intended for trusted, local documents.
-- Docker isolation is not a hostile-code sandbox. Native TeX processes user-authored input and the service must not be exposed directly to the internet.
+- Native TeX/MuPDF/TeXpresso parsers are not a complete hostile-code boundary. All people able to submit documents or use the mapped workspace must be mutually trusted.
 - No extra Linux capabilities or privileged mode are required.
 
 ## Platform notes

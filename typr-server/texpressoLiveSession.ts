@@ -49,12 +49,17 @@ export class TexpressoLiveSession {
   private outbound: Promise<void> = Promise.resolve();
   private resolveClosed!: () => void;
   private removeExitListener: (() => void) | undefined;
+  private idleTimer: NodeJS.Timeout;
+  private readonly lifetimeTimer: NodeJS.Timeout;
 
   constructor(socket: WebSocket, onClosed: (session: TexpressoLiveSession) => void) {
     this.socket = socket;
     this.onClosed = onClosed;
     this.closed = new Promise((resolve) => { this.resolveClosed = resolve; });
+    this.idleTimer = setTimeout(() => { void this.close("error"); }, 5 * 60_000);
+    this.lifetimeTimer = setTimeout(() => { void this.close("error"); }, 30 * 60_000);
     socket.on("message", (data, isBinary) => {
+      this.resetIdleTimer();
       void this.handleFrame(data, isBinary).catch(() => this.close("error", false));
     });
     socket.once("close", () => { void this.close("client-disconnect", false); });
@@ -64,6 +69,8 @@ export class TexpressoLiveSession {
   async close(reason: LiveSessionCloseReason, notifyClient = true): Promise<void> {
     if (this.closing) return this.closed;
     this.closing = true;
+    clearTimeout(this.idleTimer);
+    clearTimeout(this.lifetimeTimer);
     this.queue.length = 0;
     this.removeExitListener?.();
     try {
@@ -84,6 +91,11 @@ export class TexpressoLiveSession {
       this.onClosed(this);
       this.resolveClosed();
     }
+  }
+
+  private resetIdleTimer(): void {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => { void this.close("error"); }, 5 * 60_000);
   }
 
   private async handleFrame(data: RawData, isBinary: boolean): Promise<void> {

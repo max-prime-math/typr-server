@@ -19,12 +19,12 @@ Matching numbers are allowed but do not make these values the same version strea
 
 ## CI and publish boundary
 
-`.github/workflows/docker.yml` runs on pull requests, pushes to the release-channel branches, matching version tags, and manual dispatches. A source job typechecks, runs the complete unit suite, and builds the production frontend. Its architecture matrix then builds and runs the same existing Docker harnesses for:
+`.github/workflows/docker.yml` runs on pull requests, pushes to `main`, matching version tags, and manual dispatches. A source job typechecks and runs the standalone protocol/server unit suite. Its architecture matrix then builds and runs the Docker harnesses for:
 
 - `linux/amd64` natively on the GitHub-hosted amd64 runner;
 - `linux/arm64` natively on GitHub's `ubuntu-24.04-arm` runner.
 
-Both jobs verify container startup/status, simple and multi-file pdfLaTeX, a binary image asset, typed invalid-LaTeX failure, path rejection, persistent TeXpresso execution, raster page export, and the full WebSocket live-preview lifecycle. The browser frontend E2E suite is not repeated inside each architecture job: the transport harness already exercises the architecture-sensitive container backend, while frontend behavior remains covered by the normal unit/build and focused frontend E2E workflows.
+Both jobs verify container startup/status, simple and multi-file pdfLaTeX, a binary image asset, typed invalid-LaTeX failure, mapped-workspace API/path/symlink/precondition limits, compiler isolation from the mounted workspace, disabled shell escape and latexmk rc files, timeout/concurrency/output/cleanup recovery, persistent TeXpresso execution, raster page export, and the full WebSocket live-preview lifecycle. Frontend behavior is validated independently in the Typr repository against the exact protocol commit it pins.
 
 Pull requests, branch pushes, and manual dispatches never log into a registry and never publish. The publish job requires both architecture test jobs and a Git ref beginning with `refs/tags/v`; it then validates the stricter exact form `vMAJOR.MINOR.PATCH`. A malformed tag fails before registry login/push.
 

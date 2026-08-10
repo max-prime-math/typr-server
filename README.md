@@ -1,6 +1,6 @@
 # Typr Companion
 
-Typr Companion is the optional native LaTeX and experimental TeXpresso service
+Typr Companion is the optional native LaTeX, scoped mapped-workspace, and experimental TeXpresso service
 for [Typr](https://github.com/max-prime-math/typr). The public container remains
 `ghcr.io/max-prime-math/typr-server`.
 
@@ -8,6 +8,11 @@ The service is deliberately unauthenticated. Run it only on a trusted machine,
 LAN, or VPN; never expose it to the public Internet. Browser access from another
 device normally requires an HTTPS reverse proxy with WebSocket support because
 an HTTPS Typr page cannot call a plain HTTP/WS Companion.
+
+Browser-local storage remains Typr's default. The file API is disabled unless
+an administrator explicitly maps one trusted directory; native compiler
+children are sandboxed away from that mount. This does not create a safe
+multi-tenant service—all users and documents must still be mutually trusted.
 
 ## Install
 

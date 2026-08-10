@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -8,22 +8,33 @@ import { WebSocketServer } from "ws";
 import {
   TYPR_COMPANION_PROTOCOL_VERSION,
   TYPR_COMPANION_ROUTES,
+  TYPR_WORKSPACE_MUTATION_HEADER,
   type CompanionCapabilities,
   type CompanionStatusResponse,
   type CompileEngine,
   type CompileFailure,
   type CompileRequest,
   type CompileResult,
-  type ProjectFile
+  type ProjectFile,
+  type WorkspaceFileWriteRequest
 } from "../src/companion-protocol/index.ts";
 import { materializeProjectFiles, resolveProjectPath, validateProjectPath } from "./projectFiles.ts";
 import { TexpressoLiveSession } from "./texpressoLiveSession.ts";
 import { TEXPRESSO_WS_LIMITS, TEXPRESSO_WS_ROUTE } from "./texpressoWsProtocol.ts";
+import { WorkspaceError, type WorkspaceStore } from "./workspaceStore.ts";
+import { NativeProcessError, runNativeProcess, type NativeProcessResult } from "./nativeProcess.ts";
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
 const DEFAULT_SERVER_VERSION = "0.1.2-dev";
 const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
+const MAX_PROJECT_FILES = 512;
+const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
+const MAX_ACTIVE_COMPILATIONS = 2;
+const MAX_ACTIVE_LIVE_SESSIONS = 2;
+const COMPILE_TIMEOUT_MS = 30_000;
+const MAX_LOG_BYTES = 1024 * 1024;
+const MAX_PDF_BYTES = 32 * 1024 * 1024;
 const IMPLEMENTED_ENGINES = ["pdflatex"] as const;
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "https://typr.ca",
@@ -39,13 +50,7 @@ export interface TyprServerOptions {
   /** Used by tests and by embedders that need to check host tooling differently. */
   isPdflatexAvailable?: () => Promise<boolean>;
   allowedOrigins?: ReadonlySet<string>;
-}
-
-interface NativeRunResult {
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
+  workspace?: WorkspaceStore;
 }
 
 interface ValidationSuccess {
@@ -67,6 +72,7 @@ interface RequestContext {
   activeCompilations: Set<AbortController>;
   activeLiveSessions: Set<TexpressoLiveSession>;
   webSocketServer: WebSocketServer;
+  workspace?: WorkspaceStore;
 }
 
 let pdflatexAvailability: Promise<boolean> | undefined;
@@ -88,7 +94,8 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
     serverVersion,
     activeCompilations: new Set(),
     activeLiveSessions: new Set(),
-    webSocketServer
+    webSocketServer,
+    workspace: options.workspace
   };
 
   const server = createServer(async (request, response) => {
@@ -96,6 +103,10 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
       await handleRequest(request, response, context);
     } catch (error) {
       // Never let malformed network input terminate the local server process.
+      if (error instanceof WorkspaceError) {
+        sendJson(response, error.status, { error: { code: error.code, message: error.message } });
+        return;
+      }
       sendJson(response, 500, {
         error: {
           code: "internal-server-error",
@@ -113,6 +124,10 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
     const origin = request.headers.origin;
     if (origin && !allowedOrigins.has(origin)) {
       rejectUpgrade(socket, 403, "WebSocket origin is not allowed.");
+      return;
+    }
+    if (context.activeLiveSessions.size >= MAX_ACTIVE_LIVE_SESSIONS) {
+      rejectUpgrade(socket, 429, "Companion is already running its maximum number of live compiler sessions.");
       return;
     }
     webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
@@ -171,9 +186,13 @@ export function validateCompileRequest(value: unknown): ValidationResult {
   if (!Array.isArray(value.files)) {
     return invalid("files must be an array.");
   }
+  if (value.files.length > MAX_PROJECT_FILES) {
+    return invalid(`files must contain at most ${MAX_PROJECT_FILES} entries.`);
+  }
 
   const files: ProjectFile[] = [];
   const seenPaths = new Set<string>();
+  let decodedProjectBytes = 0;
   for (let index = 0; index < value.files.length; index += 1) {
     const file = value.files[index];
     if (!isRecord(file)) {
@@ -198,6 +217,7 @@ export function validateCompileRequest(value: unknown): ValidationResult {
       if (typeof file.content !== "string") {
         return invalid(`files[${index}].content must be a string for a text file.`);
       }
+      decodedProjectBytes += Buffer.byteLength(file.content);
       files.push({ path: filePath, kind: "text", content: file.content });
       continue;
     }
@@ -212,6 +232,7 @@ export function validateCompileRequest(value: unknown): ValidationResult {
         encoding: "base64",
         content: file.content
       });
+      decodedProjectBytes += Buffer.from(file.content, "base64").byteLength;
       continue;
     }
 
@@ -220,6 +241,9 @@ export function validateCompileRequest(value: unknown): ValidationResult {
 
   if (!seenPaths.has(mainFilePath)) {
     return invalid("mainFilePath must identify one of the supplied files.");
+  }
+  if (decodedProjectBytes > MAX_PROJECT_BYTES) {
+    return invalid("Decoded project files exceed the 25 MiB compilation limit.");
   }
 
   return {
@@ -241,7 +265,20 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   applyCorsHeaders(request, response, context.allowedOrigins);
 
+  if (isWorkspaceRoute(url.pathname) && request.headers.origin && !context.allowedOrigins.has(request.headers.origin)) {
+    sendJson(response, 403, {
+      error: { code: "workspace-origin-forbidden", message: "This browser origin may not access the mapped workspace." }
+    });
+    return;
+  }
+
   if (request.method === "OPTIONS") {
+    if (isWorkspaceRoute(url.pathname) && !context.workspace) {
+      sendJson(response, 404, {
+        error: { code: "workspace-disabled", message: "No mapped workspace is configured." }
+      });
+      return;
+    }
     response.writeHead(204).end();
     return;
   }
@@ -250,7 +287,13 @@ async function handleRequest(
     const engines: CompileEngine[] = (await context.isPdflatexAvailable()) ? [...IMPLEMENTED_ENGINES] : [];
     const capabilities: CompanionCapabilities = {
       compile: { engines },
-      filesystem: { projectStorage: false },
+      filesystem: context.workspace ? {
+        projectStorage: true,
+        workspaceApiVersion: 1,
+        workspaceId: context.workspace.workspaceId,
+        writable: true,
+        limits: { ...context.workspace.limits }
+      } : { projectStorage: false },
       lsp: { languages: [] },
       git: { enabled: false },
       terminal: { enabled: false }
@@ -261,6 +304,11 @@ async function handleRequest(
       capabilities
     };
     sendJson(response, 200, status);
+    return;
+  }
+
+  if (isWorkspaceRoute(url.pathname)) {
+    await handleWorkspaceRequest(request, response, url, context.workspace);
     return;
   }
 
@@ -297,6 +345,12 @@ async function handleRequest(
       return;
     }
 
+    if (context.activeCompilations.size >= MAX_ACTIVE_COMPILATIONS) {
+      sendJson(response, 429, {
+        error: { code: "server-busy", message: "Companion is already running its maximum number of native compilations." }
+      });
+      return;
+    }
     const compilation = new AbortController();
     context.activeCompilations.add(compilation);
     let result: CompileResult;
@@ -312,6 +366,91 @@ async function handleRequest(
   sendJson(response, 404, {
     error: { code: "not-found", message: "No Companion route matches this request." }
   });
+}
+
+async function handleWorkspaceRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  workspace: WorkspaceStore | undefined
+): Promise<void> {
+  if (!workspace) {
+    sendJson(response, 404, {
+      error: { code: "workspace-disabled", message: "No mapped workspace is configured." }
+    });
+    return;
+  }
+
+  if (url.pathname === TYPR_COMPANION_ROUTES.workspaceFiles) {
+    if (request.method !== "GET") {
+      response.setHeader("Allow", "GET, OPTIONS");
+      sendJson(response, 405, { error: { code: "method-not-allowed", message: "Workspace listing only supports GET." } });
+      return;
+    }
+    sendJson(response, 200, await workspace.list());
+    return;
+  }
+
+  const paths = url.searchParams.getAll("path");
+  if (paths.length !== 1) {
+    throw new WorkspaceError(400, "invalid-workspace-path", "Exactly one workspace path query parameter is required.");
+  }
+  const path = paths[0];
+
+  if (request.method === "GET") {
+    const file = await workspace.read(path);
+    response.setHeader("ETag", file.etag);
+    sendJson(response, 200, file);
+    return;
+  }
+
+  if (request.method === "PUT") {
+    requireWorkspaceMutationHeader(request);
+    if (!String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      throw new WorkspaceError(415, "workspace-content-type", "Workspace writes require application/json.");
+    }
+    const ifNoneMatch = singleHeader(request.headers["if-none-match"]);
+    const ifMatch = singleHeader(request.headers["if-match"]);
+    if ((!ifNoneMatch && !ifMatch) || (ifNoneMatch && ifMatch)) {
+      throw new WorkspaceError(428, "workspace-precondition-required", "Use If-None-Match: * to create or If-Match with the current ETag to update.");
+    }
+    if (ifNoneMatch && ifNoneMatch !== "*") {
+      throw new WorkspaceError(400, "invalid-workspace-precondition", "Workspace create requires If-None-Match: *.");
+    }
+    if (ifMatch && !isStrongEtag(ifMatch)) {
+      throw new WorkspaceError(400, "invalid-workspace-precondition", "Workspace update requires one quoted strong ETag.");
+    }
+    const body = await readJsonBody(request);
+    if (!body.ok) throw new WorkspaceError(body.status, "invalid-workspace-request", body.message);
+    if (!isWorkspaceWriteRequest(body.value)) {
+      throw new WorkspaceError(400, "invalid-workspace-request", "Workspace write body must contain valid base64 content.");
+    }
+    const metadata = await workspace.write(
+      path,
+      Buffer.from(body.value.content, "base64"),
+      ifNoneMatch ? { kind: "create" } : { kind: "update", etag: ifMatch! }
+    );
+    response.setHeader("ETag", metadata.etag);
+    sendJson(response, ifNoneMatch ? 201 : 200, metadata);
+    return;
+  }
+
+  if (request.method === "DELETE") {
+    requireWorkspaceMutationHeader(request);
+    const ifMatch = singleHeader(request.headers["if-match"]);
+    if (!ifMatch) {
+      throw new WorkspaceError(428, "workspace-precondition-required", "Workspace deletion requires If-Match with the current ETag.");
+    }
+    if (!isStrongEtag(ifMatch)) {
+      throw new WorkspaceError(400, "invalid-workspace-precondition", "Workspace deletion requires one quoted strong ETag.");
+    }
+    await workspace.delete(path, ifMatch);
+    response.writeHead(204).end();
+    return;
+  }
+
+  response.setHeader("Allow", "GET, PUT, DELETE, OPTIONS");
+  sendJson(response, 405, { error: { code: "method-not-allowed", message: "Unsupported workspace file method." } });
 }
 
 async function compileProject(
@@ -331,9 +470,13 @@ async function compileProject(
   }
 
   const workspace = await mkdtemp(join(tmpdir(), "typr-companion-"));
+  const deadline = new AbortController();
+  const timeout = setTimeout(() => deadline.abort(), COMPILE_TIMEOUT_MS);
+  const relayAbort = () => deadline.abort();
+  signal?.addEventListener("abort", relayAbort, { once: true });
   try {
     await materializeProjectFiles(workspace, request.files);
-    const nativeResult = await runPdflatexProject(workspace, request.mainFilePath, signal);
+    const nativeResult = await runPdflatexProject(workspace, request.mainFilePath, deadline.signal);
     const log = await collectCompileLog(workspace, request.mainFilePath, nativeResult);
     const pdfPath = await findOutputPdf(workspace, request.mainFilePath);
 
@@ -345,7 +488,7 @@ async function compileProject(
           path: relative(workspace, pdfPath).replaceAll("\\", "/"),
           mediaType: "application/pdf",
           encoding: "base64",
-          content: (await readFile(pdfPath)).toString("base64")
+          content: (await readPdf(pdfPath)).toString("base64")
         },
         log,
         durationMs: elapsedSince(startedAt)
@@ -363,6 +506,12 @@ async function compileProject(
       latexError.line
     );
   } catch (error) {
+    if (error instanceof NativeProcessError) {
+      return compileFailure(request.engine, error.code, error.message, "", startedAt);
+    }
+    if (error instanceof CompileOutputError) {
+      return compileFailure(request.engine, error.code, error.message, "", startedAt);
+    }
     return compileFailure(
       request.engine,
       "native-compiler-error",
@@ -371,6 +520,8 @@ async function compileProject(
       startedAt
     );
   } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", relayAbort);
     await rm(workspace, { recursive: true, force: true });
   }
 }
@@ -379,23 +530,23 @@ async function runPdflatexProject(
   workspace: string,
   mainFilePath: string,
   signal?: AbortSignal
-): Promise<NativeRunResult> {
+): Promise<NativeProcessResult> {
   if (await commandAvailable("latexmk")) {
-    return runCommand(
+    return runNativeProcess(
       "latexmk",
-      ["-pdf", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
+      ["-norc", "-pdf", "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
       workspace,
-      signal
+      signal ?? new AbortController().signal
     );
   }
 
-  let result: NativeRunResult = { exitCode: 0, signal: null, stdout: "", stderr: "" };
+  let result: NativeProcessResult = { exitCode: 0, signal: null, stdout: "", stderr: "" };
   for (let pass = 1; pass <= 3; pass += 1) {
-    result = await runCommand(
+    result = await runNativeProcess(
       "pdflatex",
-      ["-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
+      ["-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
       workspace,
-      signal
+      signal ?? new AbortController().signal
     );
     result.stdout = `--- pdflatex pass ${pass} ---\n${result.stdout}`;
     if (result.exitCode !== 0) {
@@ -405,54 +556,15 @@ async function runPdflatexProject(
   return result;
 }
 
-function runCommand(command: string, args: string[], cwd: string, signal?: AbortSignal): Promise<NativeRunResult> {
-  return new Promise((resolveRun, rejectRun) => {
-    const detached = process.platform !== "win32";
-    const child = spawn(command, args, { cwd, detached, shell: false });
-    let stdout = "";
-    let stderr = "";
-    const stopProcess = () => {
-      try {
-        if (detached && child.pid) {
-          // latexmk may have started pdflatex; signal the Unix process group so
-          // a container shutdown cannot leave that child compiler behind.
-          process.kill(-child.pid, "SIGTERM");
-        } else {
-          child.kill("SIGTERM");
-        }
-      } catch {
-        // The compiler may have completed between the shutdown signal and kill.
-      }
-    };
-    if (signal?.aborted) {
-      stopProcess();
-    } else {
-      signal?.addEventListener("abort", stopProcess, { once: true });
-    }
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.once("error", (error) => {
-      signal?.removeEventListener("abort", stopProcess);
-      rejectRun(error);
-    });
-    child.once("close", (exitCode, childSignal) => {
-      signal?.removeEventListener("abort", stopProcess);
-      resolveRun({ exitCode, signal: childSignal, stdout, stderr });
-    });
-  });
-}
-
 async function collectCompileLog(
   workspace: string,
   mainFilePath: string,
-  nativeResult: NativeRunResult
+  nativeResult: NativeProcessResult
 ): Promise<string> {
   const logPath = replaceExtension(resolveProjectPath(workspace, mainFilePath), ".log");
   let compilerLog = "";
   try {
-    compilerLog = await readFile(logPath, "utf8");
+    compilerLog = await readTextCapped(logPath, MAX_LOG_BYTES);
   } catch {
     // A launch or very early compiler failure may not create a .log file.
   }
@@ -461,26 +573,49 @@ async function collectCompileLog(
 
 async function findOutputPdf(workspace: string, mainFilePath: string): Promise<string | undefined> {
   const expected = replaceExtension(resolveProjectPath(workspace, mainFilePath), ".pdf");
-  if (await exists(expected)) {
+  try {
+    const info = await lstat(expected);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new CompileOutputError("compiler-output-invalid", "Compiler output is not a regular PDF file.");
+    }
+    if (info.size > MAX_PDF_BYTES) {
+      throw new CompileOutputError("compiler-output-too-large", "Compiler PDF exceeds 32 MiB.");
+    }
     return expected;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
   }
-
-  const pdfs = await findFilesWithExtension(workspace, ".pdf");
-  return pdfs.length === 1 ? pdfs[0] : undefined;
 }
 
-async function findFilesWithExtension(directory: string, extension: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const matches: string[] = [];
-  for (const entry of entries) {
-    const entryPath = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      matches.push(...(await findFilesWithExtension(entryPath, extension)));
-    } else if (entry.isFile() && entry.name.endsWith(extension)) {
-      matches.push(entryPath);
-    }
+async function readPdf(path: string): Promise<Buffer> {
+  const content = await readFile(path);
+  if (content.byteLength > MAX_PDF_BYTES) {
+    throw new CompileOutputError("compiler-output-too-large", "Compiler PDF exceeds 32 MiB.");
   }
-  return matches;
+  return content;
+}
+
+async function readTextCapped(path: string, maxBytes: number): Promise<string> {
+  const handle = await openFile(path, "r");
+  try {
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0);
+    const info = await handle.stat();
+    return `${buffer.subarray(0, bytesRead).toString("utf8")}${info.size > maxBytes ? "\n[log truncated at 1 MiB]" : ""}`;
+  } finally {
+    await handle.close();
+  }
+}
+
+class CompileOutputError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "CompileOutputError";
+    this.code = code;
+  }
 }
 
 function replaceExtension(filePath: string, extension: string): string {
@@ -558,8 +693,12 @@ function applyCorsHeaders(request: IncomingMessage, response: ServerResponse, al
   const origin = request.headers.origin;
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("Access-Control-Allow-Origin", origin);
-    response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    response.setHeader(
+      "Access-Control-Allow-Headers",
+      `Content-Type, If-Match, If-None-Match, ${TYPR_WORKSPACE_MUTATION_HEADER}`
+    );
+    response.setHeader("Access-Control-Expose-Headers", "ETag");
     if (request.headers["access-control-request-private-network"] === "true") {
       response.setHeader("Access-Control-Allow-Private-Network", "true");
     }
@@ -583,17 +722,36 @@ function commandAvailable(command: string): Promise<boolean> {
   });
 }
 
-async function exists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
+function isBase64(value: string): boolean {
+  return value.length % 4 !== 1 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}={0,2}|[A-Za-z0-9+/]{3}={0,1})?$/.test(value);
+}
+
+function isWorkspaceRoute(pathname: string): boolean {
+  return pathname === TYPR_COMPANION_ROUTES.workspaceFiles || pathname === TYPR_COMPANION_ROUTES.workspaceFile;
+}
+
+function requireWorkspaceMutationHeader(request: IncomingMessage): void {
+  if (singleHeader(request.headers[TYPR_WORKSPACE_MUTATION_HEADER.toLowerCase()]) !== "1") {
+    throw new WorkspaceError(
+      400,
+      "workspace-mutation-header-required",
+      `${TYPR_WORKSPACE_MUTATION_HEADER}: 1 is required for workspace mutations.`
+    );
   }
 }
 
-function isBase64(value: string): boolean {
-  return value.length % 4 !== 1 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}={0,2}|[A-Za-z0-9+/]{3}={0,1})?$/.test(value);
+function singleHeader(value: string | string[] | undefined): string | undefined {
+  if (typeof value !== "string" || value.includes(",")) return undefined;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
+function isStrongEtag(value: string): boolean {
+  return /^"[^"\r\n]+"$/u.test(value);
+}
+
+function isWorkspaceWriteRequest(value: unknown): value is WorkspaceFileWriteRequest {
+  return isRecord(value) && value.encoding === "base64" && typeof value.content === "string" && isBase64(value.content);
 }
 
 function isInteger(value: unknown): value is number {
@@ -616,15 +774,18 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   const payload = JSON.stringify(body);
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(payload)
+    "Content-Length": Buffer.byteLength(payload),
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff"
   });
   response.end(payload);
 }
 
 function rejectUpgrade(socket: import("node:stream").Duplex, status: number, message: string): void {
   const body = `${message}\n`;
+  const statusText = status === 403 ? "Forbidden" : status === 429 ? "Too Many Requests" : "Not Found";
   socket.end(
-    `HTTP/1.1 ${status} ${status === 403 ? "Forbidden" : "Not Found"}\r\n` +
+    `HTTP/1.1 ${status} ${statusText}\r\n` +
     "Connection: close\r\n" +
     "Content-Type: text/plain; charset=utf-8\r\n" +
     `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`

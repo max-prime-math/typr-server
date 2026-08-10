@@ -11,6 +11,9 @@ The standalone local `typr-server` implementation is in [`typr-server`](../typr-
 - `GET /api/v1/status` returns `protocolVersion`, `serverVersion`, and capability groups for compilation, filesystem/project storage, LSP languages, Git, and terminal support. Compilation advertises supported engine names; an empty list means it is unavailable.
 - `POST /api/v1/compile` accepts a `CompileRequest`: protocol version, selected engine, root document path, and all project files. Text and base64-encoded binary files are materialized into the temporary native-TeX project directory.
 - Compile responses are a discriminated `CompileResult`: `{ ok: true }` includes a base64 PDF, log, engine, and duration; `{ ok: false }` includes the engine, compiler log, a small list of useful errors, and duration when available.
+- When an administrator explicitly maps one fixed workspace, `GET /api/v1/workspace/files` lists regular files and `GET`, `PUT`, and `DELETE /api/v1/workspace/file?path=...` read or conditionally mutate one file. Binary content uses base64; writes require `X-Typr-Workspace-Mutation: 1` plus `If-None-Match: *` for creation or an exact strong `If-Match` ETag for update/deletion.
+
+Workspace storage is disabled when `TYPR_COMPANION_WORKSPACE_ROOT` is unset. When enabled, status advertises `projectStorage: true`, workspace API version 1, an opaque `workspaceId`, writability, and enforced limits. Paths are relative POSIX paths; absolute paths, traversal, `.git`, symlinks, special files, and internal temporary names are rejected. Writes use same-directory atomic replacement. The API intentionally has no arbitrary directory selection, command execution, Git access, recursive deletion, move, watch, or public-network security model.
 
 ## Versioning and negotiation
 
@@ -23,10 +26,10 @@ Types do not validate JSON received over HTTP. Typr has no established runtime s
 `typr-server` is deliberately a small Node HTTP server rather than a second web framework. It requires Node 22.6 or later (for Node's built-in TypeScript type stripping) and a host TeX installation that provides `pdflatex`. It prefers `latexmk` when available, using this command without a shell:
 
 ```text
-latexmk -pdf -interaction=nonstopmode -halt-on-error -file-line-error main.tex
+latexmk -norc -pdf -no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error main.tex
 ```
 
-When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-interaction=nonstopmode -halt-on-error -file-line-error`. The sole currently advertised engine is `pdflatex`; `xelatex`, `lualatex`, `typst`, and the other protocol capabilities are intentionally not implemented.
+When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, 1 MiB combined process output/log capture, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data.
 
 Start it from the repository root:
 
@@ -54,7 +57,7 @@ If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` comp
 
 By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS, authentication, or remote-server security model is provided.
 
-**Security warning:** this server is for local development only. It has no authentication and must not be exposed directly to a network or the public internet.
+**Security warning:** this server has no authentication and must never be exposed to the public internet. Self-hosted use is limited to a trusted LAN or private VPN, with exact allowed origins and network controls. Treat every document and workspace user as trusted; native parsers still are not a complete hostile-document security boundary.
 
 ## Official Docker Companion runtime
 
@@ -67,6 +70,8 @@ Normal users run the published multi-platform image. Installation, updates, vers
 ```bash
 docker run -d --name typr-server --restart unless-stopped \
   --security-opt no-new-privileges:true \
+  --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
+  --pids-limit 256 --memory 2g --cpus 2 \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
@@ -79,7 +84,7 @@ The server listens on `0.0.0.0:8484` **inside** its container so Docker port pub
 docker compose up -d
 ```
 
-It pulls the published image and exposes only `127.0.0.1:8484`. [`compose.dev.yaml`](../compose.dev.yaml) retains the build-based contributor workflow. The Companion has no volume or persistent state: every compile request and TeXpresso session gets a temporary project directory that is removed after use.
+It pulls the published image and exposes only `127.0.0.1:8484`. [`compose.dev.yaml`](../compose.dev.yaml) retains the build-based contributor workflow. Compilation remains stateless: every compile request and TeXpresso session gets a temporary project directory that is removed after use. An administrator may separately map one project workspace to `/workspace`; it remains disabled by default and is exposed only through the scoped file API above.
 
 Verify the running service with its normal status endpoint:
 
@@ -101,6 +106,9 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_HOST` | `0.0.0.0` | Container listen interface. Native development retains its `127.0.0.1` default. |
 | `TYPR_COMPANION_PORT` | `8484` | Companion TCP port. |
 | `TYPR_COMPANION_ALLOWED_ORIGINS` | official Typr and local Vite origins | Optional comma-separated exact-origin override, shared with the native server. |
+| `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
+| `TYPR_COMPANION_WORKSPACE_ID` | `default` | Opaque stable identity used by browser bindings; it is not a host path. |
+| `TYPR_COMPANION_SANDBOX_EXECUTABLE` | `/usr/local/bin/typr-native-sandbox` | Fail-closed native compiler launcher. A mapped workspace is refused if this is unavailable. |
 
 Node is the container's main process; no shell wrapper is used. It handles normal `SIGTERM`/`SIGINT` shutdown by stopping new HTTP work and terminating active LaTeX compiler process groups before the listener closes. The image runs as the non-root `node` user. `/tmp` remains writable for request-local compiler directories.
 
@@ -124,7 +132,7 @@ The selected Node base image and Debian packages have `linux/amd64` and `linux/a
 
 Node, TeX Live, `latexmk`, and their system dependencies are Companion **container toolchain** components: they are versioned by the Dockerfile and supplied by the image. Future document-specific package caches, fonts, and persistent caches are separate project-dependency concerns. No package-management or persistence API is provided here, so adding such a capability later does not need to depend on a host package manager such as apt, Homebrew, winget, or pacman.
 
-The Companion executes user-authored LaTeX with native tools. The non-root container user and request-local temporary directories reduce accidental host impact, but this is not a complete hostile-document sandbox. It is for trusted local use only; do not expose its Docker port to a LAN or the public internet. Authentication, stronger isolation, remote deployment, persistent server projects, file synchronization, and package installation APIs are deliberately not implemented. The private experimental WebSocket described below does not change this security model.
+The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. Operate only on a trusted LAN/VPN, never expose the port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Authentication and package-installation APIs are deliberately not implemented. The private experimental WebSocket does not change this security model.
 
 Future images may add optional capabilities such as Typst, LSP servers, or Git tooling. TeXpresso is present only as the internal experiment documented below; it is not part of the public Companion protocol or capability advertisement.
 
@@ -468,4 +476,4 @@ Every native compile sends the complete project: all normal project files, the c
 
 If the server is absent, protocol-incompatible, lacks the requested engine, or the selected LaTeX driver is not `pdftex_bibtex8`, Typr uses BusyTeX. If a connected server disappears during a compile, Typr marks it unavailable and retries that compile with BusyTeX. A typed LaTeX error from Companion remains a compiler error in Typr's usual error/build-log flow. HTTP and malformed-protocol failures are surfaced as Companion-specific errors without disabling BusyTeX for future compiles.
 
-This remains a local integration. Docker packages the native server and its private experimental TeXpresso WebSocket, and Typr exposes that transport only through the experimental preview selector. It does not add server discovery, authentication, remote-server management, persistent server workspace, LSP, Git, terminal, package-management UI, or a self-hosted Typr PWA.
+This remains a trusted self-host integration. Docker packages the native server, optional scoped workspace, and its private experimental TeXpresso WebSocket. It does not add server discovery, authentication, arbitrary remote-server management, LSP, Git, terminal, package-management UI, or a self-hosted Typr PWA.

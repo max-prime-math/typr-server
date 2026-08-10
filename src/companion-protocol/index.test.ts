@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   TYPR_COMPANION_PROTOCOL_VERSION,
   TYPR_COMPANION_ROUTES,
+  TYPR_WORKSPACE_MUTATION_HEADER,
   type CompanionStatusResponse,
   type CompileFailure,
   type CompileRequest,
@@ -14,8 +15,33 @@ describe("Typr Companion protocol", () => {
     expect(TYPR_COMPANION_PROTOCOL_VERSION).toBe(1);
     expect(TYPR_COMPANION_ROUTES).toEqual({
       status: "/api/v1/status",
-      compile: "/api/v1/compile"
+      compile: "/api/v1/compile",
+      workspaceFiles: "/api/v1/workspace/files",
+      workspaceFile: "/api/v1/workspace/file"
     });
+    expect(TYPR_WORKSPACE_MUTATION_HEADER).toBe("X-Typr-Workspace-Mutation");
+  });
+
+  it("models the optional versioned mapped-workspace capability", () => {
+    const status: CompanionStatusResponse = {
+      protocolVersion: 1,
+      serverVersion: "0.1.2-dev",
+      capabilities: {
+        compile: { engines: ["pdflatex"] },
+        filesystem: {
+          projectStorage: true,
+          workspaceApiVersion: 1,
+          workspaceId: "home-workspace",
+          writable: true,
+          limits: { maxFileBytes: 16, maxEntries: 4, maxWorkspaceBytes: 64 }
+        },
+        lsp: { languages: [] },
+        git: { enabled: false },
+        terminal: { enabled: false }
+      }
+    };
+
+    expect(status.capabilities.filesystem.projectStorage && status.capabilities.filesystem.workspaceId).toBe("home-workspace");
   });
 
   it("models capability discovery with extensible capability groups", () => {

@@ -5,6 +5,18 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=536870912
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
     ports:
       # Keep the unauthenticated Companion private to this machine.
       - "127.0.0.1:8484:8484"
+    # To enable one mapped workspace, create a local compose override with:
+    # environment:
+    #   TYPR_COMPANION_WORKSPACE_ROOT: /workspace
+    #   TYPR_COMPANION_WORKSPACE_ID: home-workspace
+    # volumes:
+    #   - /srv/typr-workspace:/workspace

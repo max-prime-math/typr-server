@@ -3,7 +3,7 @@ name: Docker Companion
 on:
   pull_request:
   push:
-    branches: [dev, beta, main]
+    branches: [main]
     tags: ["v*.*.*"]
   workflow_dispatch:
 
@@ -36,6 +36,9 @@ jobs:
 
       - name: Validate Unraid template
         run: python -c "import xml.etree.ElementTree as ET; ET.parse('unraid/typr-companion.xml')"
+
+      - name: Validate Compose definitions
+        run: docker compose -f compose.yaml config && docker compose -f compose.dev.yaml config
 
       - name: Typecheck
         run: npm run typecheck
