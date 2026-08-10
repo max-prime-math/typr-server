@@ -269,7 +269,7 @@ jobs:
             type=gha,scope=typr-server-amd64
             type=gha,scope=typr-server-arm64
           cache-to: type=gha,mode=max,scope=typr-server-release
-          provenance: mode=max
+          provenance: mode=max,version=v1
           sbom: true
 
       - name: Inspect candidate index and attestations
@@ -280,10 +280,13 @@ jobs:
           reference="${GHCR_IMAGE_NAME}@${DIGEST}"
           docker buildx imagetools inspect "${reference}" --raw > /tmp/index.json
           node scripts/verify-oci-image-index.mjs /tmp/index.json
-          docker buildx imagetools inspect "${reference}" --format '{{ json .SBOM }}' > /tmp/sbom.json
-          docker buildx imagetools inspect "${reference}" --format '{{ json .Provenance }}' > /tmp/provenance.json
-          node -e 'const value=require("/tmp/sbom.json"); for (const p of ["linux/amd64","linux/arm64"]) if (!value?.[p]?.SPDX?.SPDXID) process.exit(1)'
-          node -e 'const value=require("/tmp/provenance.json"); for (const p of ["linux/amd64","linux/arm64"]) if (!value?.[p]?.SLSA?.buildType) process.exit(1)'
+          for platform in linux/amd64 linux/arm64; do
+            architecture="${platform#linux/}"
+            docker buildx imagetools inspect "${reference}" --format "{{ json (index .SBOM \"${platform}\") }}" > "/tmp/sbom-${architecture}.json"
+            docker buildx imagetools inspect "${reference}" --format "{{ json (index .Provenance \"${platform}\") }}" > "/tmp/provenance-${architecture}.json"
+            node -e 'const value=require(process.argv[1]); if (!value?.SPDX?.SPDXID) process.exit(1)' "/tmp/sbom-${architecture}.json"
+            node -e 'const value=require(process.argv[1]); if (!value?.SLSA?.buildDefinition?.buildType || !value?.SLSA?.runDetails?.builder?.id) process.exit(1)' "/tmp/provenance-${architecture}.json"
+          done
 
   verify-candidate:
     name: Verify candidate digest (${{ matrix.platform }})
