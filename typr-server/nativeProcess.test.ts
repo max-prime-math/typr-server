@@ -53,7 +53,7 @@ describe("native compiler process policy", () => {
     const root = await createRoot();
     await expect(runNativeProcess(
       process.execPath,
-      ["-e", "for (;;) process.stdout.write('x'.repeat(65536))"],
+      ["-e", "process.stdout.write(Buffer.alloc(2 * 1024 * 1024, 'x'))"],
       root,
       new AbortController().signal
     )).rejects.toEqual(expect.objectContaining<Partial<NativeProcessError>>({ code: "compiler-output-limit" }));

@@ -91,11 +91,16 @@ export async function runNativeProcess(
         // The process may have exited between deciding to stop it and signalling it.
       }
     };
-    const stop = () => {
+    const stop = (immediate = false) => {
       if (!failure) failure = new NativeProcessError("compile-timeout", "Native compilation exceeded its deadline.");
+      if (immediate) {
+        signalGroup("SIGKILL");
+        return;
+      }
       signalGroup("SIGTERM");
       killTimer ??= setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
     };
+    const abortListener = () => stop();
     const capture = (target: Buffer[], chunk: Buffer | string) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const remaining = MAX_CAPTURE_BYTES - capturedBytes;
@@ -103,21 +108,21 @@ export async function runNativeProcess(
       capturedBytes += buffer.byteLength;
       if (capturedBytes > MAX_CAPTURE_BYTES && !failure) {
         failure = new NativeProcessError("compiler-output-limit", "Native compiler output exceeded 1 MiB.");
-        stop();
+        stop(true);
       }
     };
 
     if (signal.aborted) stop();
-    else signal.addEventListener("abort", stop, { once: true });
+    else signal.addEventListener("abort", abortListener, { once: true });
     child.stdout.on("data", (chunk) => capture(stdout, chunk));
     child.stderr.on("data", (chunk) => capture(stderr, chunk));
     child.once("error", (error) => {
-      signal.removeEventListener("abort", stop);
+      signal.removeEventListener("abort", abortListener);
       if (killTimer) clearTimeout(killTimer);
       rejectRun(error);
     });
     child.once("close", (exitCode, childSignal) => {
-      signal.removeEventListener("abort", stop);
+      signal.removeEventListener("abort", abortListener);
       if (killTimer) clearTimeout(killTimer);
       if (failure) {
         rejectRun(failure);
