@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,6 +22,10 @@ try {
   }
 
   workspaceRoot = await mkdtemp(resolve(tmpdir(), "typr-companion-docker-workspace-"));
+  // CI runner UIDs differ from the image's non-root UID. Make the hostile
+  // canary mount intentionally accessible so confinement tests prove the
+  // native sandbox—not incidental Unix ownership—is protecting it.
+  await chmod(workspaceRoot, 0o777);
   const readCanary = "TYPR_WORKSPACE_READ_SECRET_9f7499";
   await writeFile(resolve(workspaceRoot, "read-canary.tex"), `\\typeout{${readCanary}}\n`);
   containerId = (await capture("docker", [
