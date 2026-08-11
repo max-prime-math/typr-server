@@ -173,8 +173,8 @@ container removes no browser-local projects and no mapped host directory.
 
 The template remains a direct user template until both public image tags exist,
 it passes install/update/rollback/removal and HTTPS/WebSocket tests on a real
-Unraid host, a maintained Unraid forum support topic exists, and the maintainer
-puts that identical URL in the template's `Support` and profile's `Forum`
-fields. Then run `npm run test:unraid -- --submission-ready` and the portal's
+Unraid host, and a maintained support destination appears in the template's
+`Support` field. An optional profile `Forum` field may point to the same
+destination. Then run `npm run test:unraid -- --submission-ready` and the portal's
 Validate and Scan actions before the maintainer explicitly approves Community
 Applications submission.

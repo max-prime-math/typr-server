@@ -146,6 +146,6 @@ promotion boundary.
 
 The Unraid template remains independent from release automation. Submission is
 blocked until the stable public alias exists, a real Unraid install and trusted
-HTTPS/WebSocket path pass, a maintained forum support topic exists, profile XML
+HTTPS/WebSocket path pass, a maintained support destination exists, profile XML
 is complete, portal Validate/Scan pass, and the maintainer explicitly approves
 submission. Public Internet exposure remains prohibited.
