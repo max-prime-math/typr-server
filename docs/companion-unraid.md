@@ -150,11 +150,11 @@ tailscale serve status
 Enter the resulting base URL, such as
 `https://UNRAID-NAME.TAILNET.ts.net:8443`, in Typr. A separate management
 endpoint may be created with
-`tailscale serve --bg --https=8444 http://127.0.0.1:8485`. Serve terminates trusted TLS
-and proxies both the HTTP API and WebSocket upgrade within the tailnet. The
+`tailscale serve --bg --https=8444 http://127.0.0.1:8485`. Serve terminates
+trusted TLS and proxies both the HTTP API and WebSocket upgrade within the tailnet. The
 browser device must be connected to that tailnet and allowed by its access
-rules. Keep Tailscale **Funnel disabled**: Funnel would make this unauthenticated
-service public. If Typr itself uses a Tailscale HTTPS origin, add that exact
+rules. Keep Tailscale **Funnel disabled**: Funnel would make the service API
+public. If Typr itself uses a Tailscale HTTPS origin, add that exact
 scheme, hostname, and port to **Allowed Typr origins**.
 
 ## Connect Typr
@@ -188,9 +188,9 @@ container removes no browser-local projects and no mapped host directory.
 
 The template remains a direct user template until both public image tags exist,
 it passes install/update/rollback/removal, HTTPS/WebSocket tests, and the
-authenticated management path on a real
-Unraid host, a maintained Unraid forum support topic exists, and the maintainer
-puts that identical URL in the template's `Support` and profile's `Forum`
-fields. Then run `npm run test:unraid -- --submission-ready` and the portal's
+authenticated management path on a real Unraid host, and a maintained support
+destination appears in the template's `Support` field. An optional profile
+`Forum` field may point to the same destination. Then run
+`npm run test:unraid -- --submission-ready` and the portal's
 Validate and Scan actions before the maintainer explicitly approves Community
 Applications submission.

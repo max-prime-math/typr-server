@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <CommunityApplications>
-  <Profile>Typr Companion is the independently maintained optional native LaTeX, TeXpresso, and tightly scoped mapped-workspace service for the browser-local Typr editor. Installation and issue support are linked from the project page; a dedicated Unraid support topic will be added before Community Applications submission.</Profile>
+  <Profile>Typr Companion is the independently maintained optional native LaTeX, TeXpresso, and tightly scoped mapped-workspace service for the browser-local Typr editor. Installation documentation and maintained issue support are linked from the project page.</Profile>
   <Icon>https://raw.githubusercontent.com/max-prime-math/typr/main/public/icons/icon-512.png</Icon>
   <WebPage>https://github.com/max-prime-math/typr-server</WebPage>
 </CommunityApplications>
