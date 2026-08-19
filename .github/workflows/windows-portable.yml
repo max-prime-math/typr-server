@@ -3,7 +3,7 @@ name: Windows portable Companion
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ["v*"]
   workflow_dispatch:
 
