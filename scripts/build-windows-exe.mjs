@@ -27,6 +27,10 @@ await build({
   target: "node26",
   sourcemap: false,
   legalComments: "none",
+  banner: {
+    js: 'import { createRequire as __typrCreateRequire } from "node:module"; ' +
+      'const require = __typrCreateRequire(import.meta.url);'
+  },
   define: {
     TYPR_WINDOWS_BUILD_VERSION: JSON.stringify(release.version)
   }
