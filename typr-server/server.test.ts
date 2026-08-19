@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
+import WebSocket from "ws";
 import {
   TYPR_COMPANION_PROTOCOL_VERSION,
   TYPR_COMPANION_ROUTES,
@@ -10,6 +11,8 @@ import {
 } from "../src/companion-protocol/index.ts";
 import { createTyprServer, hostHasPdflatex, materializeProjectFiles } from "./server.ts";
 import { WorkspaceStore } from "./workspaceStore.ts";
+import { AccessStore } from "./accessStore.ts";
+import { ActivityBus } from "./activity.ts";
 
 const servers: Server[] = [];
 const workspaceRoots: string[] = [];
@@ -92,7 +95,7 @@ describe("typr-server Companion API", () => {
 
     const wrongHeader = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`, {
       method: "OPTIONS",
-      headers: { ...headers, "Access-Control-Request-Headers": "content-type, authorization" }
+      headers: { ...headers, "Access-Control-Request-Headers": "content-type, x-unknown" }
     });
     expect(wrongHeader.status).toBe(400);
 
@@ -242,6 +245,40 @@ describe("typr-server Companion API", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "invalid-request", message: expect.stringContaining("engine") }
     });
+  });
+
+  it("optionally enforces managed API keys and attributes activity to their users", async () => {
+    const access = await AccessStore.open();
+    const user = await access.createUser("Typr desktop");
+    const { secret } = await access.createApiKey(user.id, "Primary browser");
+    await access.setRequireApiKeys(true);
+    const activity = new ActivityBus();
+    const baseUrl = await startServer(createTyprServer({ access, activity, isPdflatexAvailable: async () => true }));
+
+    const rejected = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.status}`);
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get("www-authenticate")).toContain("Bearer");
+    const accepted = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.status}`, {
+      headers: { Authorization: `Bearer ${secret}` }
+    });
+    expect(accepted.status).toBe(200);
+    expect(activity.snapshot().some((event) => event.userId === user.id && event.type === "request-completed")).toBe(true);
+  });
+
+  it("authenticates browser WebSockets without echoing the key-bearing subprotocol", async () => {
+    const access = await AccessStore.open();
+    const user = await access.createUser("Live preview");
+    const { secret } = await access.createApiKey(user.id, "Browser socket");
+    await access.setRequireApiKeys(true);
+    const baseUrl = await startServer(createTyprServer({ access }));
+    const socketUrl = `${baseUrl.replace("http:", "ws:")}/ws/texpresso`;
+
+    await expect(openSocket(socketUrl)).rejects.toThrow(/401/u);
+    const encoded = Buffer.from(secret, "utf8").toString("base64url");
+    const socket = await openSocket(socketUrl, ["typr-companion-v1", `typr-api-key.${encoded}`]);
+    expect(socket.protocol).toBe("typr-companion-v1");
+    socket.close();
+    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
   });
 
   it("rejects unsupported protocol versions and engines", async () => {
@@ -399,4 +436,12 @@ function workspaceHeaders(additional: Record<string, string> = {}): Record<strin
     [TYPR_WORKSPACE_MUTATION_HEADER]: "1",
     ...additional
   };
+}
+
+function openSocket(url: string, protocols?: string[]): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, protocols);
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
+  });
 }

@@ -17,14 +17,26 @@ ghcr.io/max-prime-math/typr-server
 ## Windows portable executable
 
 Release builds include `typr-companion-windows-x64.exe`. Copy that one file to
-the Windows machine and run it as the ordinary signed-in user. It binds only to
-`127.0.0.1:8484`; it does not install a service, request elevation, write the
+the Windows machine and run it as the ordinary signed-in user. The Companion API
+binds to `127.0.0.1:8484` and its management GUI binds separately to
+`127.0.0.1:8485`; it does not install a service, request elevation, write the
 registry, add a firewall rule, or download packages. On first launch it extracts
 its embedded, checksum-pinned TinyTeX runtime under
 `%LOCALAPPDATA%\Typr Companion\runtime\<version>` and creates the dedicated
-workspace `%LOCALAPPDATA%\Typr Companion\workspace`. Later launches reuse the
-same per-user files. Deleting `%LOCALAPPDATA%\Typr Companion` uninstalls that
-runtime and workspace; back up the workspace first if it contains documents.
+workspace `%LOCALAPPDATA%\Typr Companion\workspace`. Management users, hashed
+API keys, and settings are stored in `%LOCALAPPDATA%\Typr Companion\management.json`.
+Later launches reuse the same per-user files. Deleting `%LOCALAPPDATA%\Typr Companion`
+uninstalls that runtime, workspace, and access configuration; back up the
+workspace first if it contains documents.
+
+Open `http://127.0.0.1:8485` to inspect advertised services and detected TeX/LSP
+providers, create or disable users, issue or revoke API keys, and watch bounded
+real-time service activity. Raw API keys are displayed once; only SHA-256 hashes
+are persisted. API-key enforcement is initially off so existing Typr clients
+continue to work. Create at least one usable key before enabling **Require API
+keys**. The management GUI is intentionally limited to loopback and the signed-in
+OS account is its administrator; this adds no Windows elevation prompt or
+separate administrator password.
 
 Native final compilation and the workspace API use the same Companion protocol
 as Docker. Because upstream TeXpresso does not support Windows, live preview
@@ -45,9 +57,11 @@ Windows native compiler children use a minimal environment, paranoid TeX input
 and output policies, disabled shell escape, isolated temporary directories,
 output/time limits, and whole-process-tree termination. Windows has no direct
 equivalent of the image's Landlock launcher, so use documents trusted by the
-signed-in Windows account. The service remains local and unauthenticated.
+signed-in Windows account. API keys control access to Companion but do not make
+native TeX a hostile multi-tenant boundary.
 
 Configuration remains available through `TYPR_COMPANION_PORT`,
+`TYPR_COMPANION_MANAGEMENT_PORT`,
 `TYPR_COMPANION_HOST`, `TYPR_COMPANION_ALLOWED_ORIGINS`,
 `TYPR_COMPANION_WORKSPACE_ROOT`, and `TYPR_COMPANION_WORKSPACE_ID`. Keep the
 default loopback host on a locked-down machine. Setting a workspace root before
@@ -246,7 +260,9 @@ There is no Companion cache volume to remove and uninstalling the container does
 - Never use router port forwarding, a public tunnel, or a publicly reachable
   reverse-proxy route for Companion. TLS does not add application authentication.
 - The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox by default, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits. The explicit stateless-only Unraid fallback is weaker, must remain volume-free, and is for trusted documents only.
-- It has no authentication and is intended for trusted, local documents.
+- API-key authentication can be enabled from the loopback management GUI. It
+  authenticates Companion clients but does not replace network controls or make
+  native parsers safe for mutually untrusted users.
 - Native TeX/MuPDF/TeXpresso parsers are not a complete hostile-code boundary. All people able to submit documents or use the mapped workspace must be mutually trusted.
 - No extra Linux capabilities or privileged mode are required.
 
@@ -257,7 +273,7 @@ There is no Companion cache volume to remove and uninstalling the container does
   setup. Docker Desktop with WSL2 remains supported for the Linux TeXpresso
   backend.
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
-- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. Host-level Tailscale Serve is supported; the per-container Tailscale hook is not. The service is unauthenticated and must not be exposed publicly.
+- **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. Host-level Tailscale Serve is supported; the per-container Tailscale hook is not. The service must not be exposed publicly, even when API keys are enabled.
 
 The GitHub workflow is configured to build and run the complete backend Docker suite natively on GitHub-hosted amd64 and arm64 runners. A successful run provides explicit CI evidence; it is not a claim of manual verification on every Docker Desktop, Linux distribution, or Unraid release.
 

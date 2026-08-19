@@ -4,8 +4,10 @@ Typr Companion is the optional native LaTeX, scoped mapped-workspace, and experi
 for [Typr](https://github.com/max-prime-math/typr). The public container remains
 `ghcr.io/max-prime-math/typr-server`.
 
-The service is deliberately unauthenticated. Run it only on a trusted machine,
-LAN, or VPN; never expose it to the public Internet. Browser access from another
+The service starts in backward-compatible trusted-local mode. Its separate
+loopback management console can create users and API keys and then require those
+keys for service requests. Run it only on a trusted machine, LAN, or VPN; never
+expose it to the public Internet. Browser access from another
 device normally requires an HTTPS reverse proxy with WebSocket support because
 an HTTPS Typr page cannot call a plain HTTP/WS Companion.
 On Unraid, use host-level Tailscale Serve for private tailnet HTTPS; the
@@ -27,7 +29,8 @@ separate [`compose.workspace.yaml`](compose.workspace.yaml) override enables one
 exact administrator-selected directory. Unraid users should follow the
 [separate Companion template guide](docs/companion-unraid.md).
 The [protocol guide](docs/companion-protocol.md) documents the versioned API and
-the experimental live-preview transport. Maintainers use the
+the experimental live-preview transport. The [management guide](docs/companion-management.md)
+documents the second port, service catalog, users, API keys, and live activity. Maintainers use the
 [staged release policy](docs/companion-release.md); a Git tag is never the first
 test of an image.
 

@@ -9,9 +9,16 @@ const executable = resolve(process.argv[2] ?? "");
 assert(isAbsolute(executable), "Pass the Windows Companion executable path.");
 const localData = await mkdtemp(join(tmpdir(), "typr-windows-portable-test-"));
 const port = 18_484;
+const managementPort = 18_485;
 const baseUrl = `http://127.0.0.1:${port}`;
+const managementUrl = `http://127.0.0.1:${managementPort}`;
 const child = spawn(executable, [], {
-  env: { ...process.env, LOCALAPPDATA: localData, TYPR_COMPANION_PORT: String(port) },
+  env: {
+    ...process.env,
+    LOCALAPPDATA: localData,
+    TYPR_COMPANION_PORT: String(port),
+    TYPR_COMPANION_MANAGEMENT_PORT: String(managementPort)
+  },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true
 });
@@ -23,11 +30,22 @@ try {
   assert(status.capabilities.compile.engines.includes("pdflatex"), "Embedded pdflatex was not advertised.");
   assert.equal(status.capabilities.filesystem.projectStorage, true);
   assert.equal(status.capabilities.filesystem.workspaceId, "windows-local");
+  const gui = await fetch(managementUrl);
+  assert.equal(gui.status, 200);
+  assert.match(await gui.text(), /Typr Companion Console/u);
+  const initialSnapshot = await managementRequest("/api/snapshot");
+  assert(initialSnapshot.services.some((service) => service.id === "latex" && service.advertised));
+  const createdUser = await managementRequest("/api/users", "POST", { name: "Windows smoke test" });
+  const createdKey = await managementRequest(`/api/users/${createdUser.user.id}/keys`, "POST", { label: "CI client" });
+  const apiKey = createdKey.secret;
+  await managementRequest("/api/settings", "PATCH", { requireApiKeys: true });
+  assert.equal((await fetch(`${baseUrl}/api/v1/status`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}/api/v1/status`, { headers: authorization(apiKey) })).status, 200);
 
   const source = "\\documentclass{article}\n\\begin{document}\nHello from portable Windows.\n\\end{document}\n";
   const compileResponse = await fetch(`${baseUrl}/api/v1/compile`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authorization(apiKey) },
     body: JSON.stringify({
       protocolVersion: 1,
       engine: "pdflatex",
@@ -43,6 +61,7 @@ try {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
+      ...authorization(apiKey),
       "X-Typr-Workspace-Mutation": "1",
       "If-None-Match": "*"
     },
@@ -50,7 +69,9 @@ try {
   });
   assert.equal(workspaceResponse.status, 201);
 
-  await testLivePreview(source);
+  await testLivePreview(source, apiKey);
+  const finalSnapshot = await managementRequest("/api/snapshot");
+  assert(finalSnapshot.activity.some((event) => event.userId === createdUser.user.id));
 } finally {
   child.kill();
   await Promise.race([new Promise((resolveExit) => child.once("exit", resolveExit)), delay(10_000)]);
@@ -70,8 +91,12 @@ async function waitForStatus() {
   throw new Error("Timed out waiting for the portable Windows Companion.");
 }
 
-async function testLivePreview(source) {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws/texpresso`);
+async function testLivePreview(source, apiKey) {
+  const encodedKey = Buffer.from(apiKey, "utf8").toString("base64url");
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws/texpresso`, [
+    "typr-companion-v1",
+    `typr-api-key.${encodedKey}`
+  ]);
   await new Promise((resolveOpen, rejectOpen) => {
     socket.once("open", resolveOpen);
     socket.once("error", rejectOpen);
@@ -102,6 +127,21 @@ async function testLivePreview(source) {
   await waitUntil(() => controls.some((message) => message.type === "revision-complete" && message.revision === 2));
   socket.send(JSON.stringify({ type: "shutdown" }));
   await new Promise((resolveClose) => socket.once("close", resolveClose));
+}
+
+async function managementRequest(path, method = "GET", body) {
+  const response = await fetch(`${managementUrl}${path}`, {
+    method,
+    headers: method === "GET" ? undefined : { "Content-Type": "application/json", "X-Typr-Management": "1" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const value = await response.json();
+  assert(response.ok, JSON.stringify(value));
+  return value;
+}
+
+function authorization(apiKey) {
+  return { Authorization: `Bearer ${apiKey}` };
 }
 
 async function waitUntil(predicate) {

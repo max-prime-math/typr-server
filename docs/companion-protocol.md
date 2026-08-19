@@ -55,9 +55,23 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 
 If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` compile request receives a typed `native-compiler-unavailable` failure rather than terminating the server.
 
-By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS, authentication, or remote-server security model is provided.
+By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
 
-**Security warning:** this server has no authentication and must never be exposed to the public internet. Self-hosted use is limited to a trusted LAN or private VPN, with exact allowed origins and network controls. Treat every document and workspace user as trusted; native parsers still are not a complete hostile-document security boundary.
+The separate management GUI on loopback port `8485` can enable optional API-key
+authentication. HTTP clients send `Authorization: Bearer typr_...`. Browser
+WebSocket clients cannot set that header, so authenticated live-preview clients
+request the subprotocols `typr-companion-v1` and
+`typr-api-key.<base64url-encoded-key>`; the server selects only
+`typr-companion-v1` and never echoes the key-bearing protocol. Preflight policy
+allows `Authorization` only on known Companion routes. Authentication starts
+disabled for compatibility and cannot be enabled until an enabled user owns an
+unrevoked key.
+
+**Security warning:** optional API keys do not make this a public or hostile
+multi-tenant service. Self-hosted use is limited to a trusted LAN or private VPN,
+with exact allowed origins and network controls. Treat every document and
+workspace user as trusted; native parsers still are not a complete
+hostile-document security boundary.
 
 ## Official Docker Companion runtime
 
@@ -77,7 +91,7 @@ docker run -d --name typr-server --restart unless-stopped \
   ghcr.io/max-prime-math/typr-server:latest
 ```
 
-The server listens on `0.0.0.0:8484` **inside** its container so Docker port publishing can reach it. The `127.0.0.1:8484:8484` mapping keeps the unauthenticated service reachable only from the host. Do not replace `127.0.0.1` with a public interface unless a future security model explicitly supports that use case.
+The server listens on `0.0.0.0:8484` **inside** its container so Docker port publishing can reach it. The `127.0.0.1:8484:8484` mapping keeps the trusted-local service reachable only from the host. Do not replace `127.0.0.1` with a public interface; optional API keys do not change that restriction.
 
 [`compose.yaml`](../compose.yaml) is the equivalent production setup:
 
@@ -93,7 +107,7 @@ Verify the running service with its normal status endpoint:
 curl -sS http://127.0.0.1:8484/api/v1/status
 ```
 
-The image's Docker health check calls that same endpoint every 30 seconds (after a short startup period). It verifies HTTP responsiveness; it intentionally does not add a Docker-specific API or run a TeX compile each time.
+The image's Docker health check calls that same endpoint every 30 seconds (after a short startup period). It treats either a successful status or the expected `401` from enabled API-key enforcement as responsive; it intentionally does not add a Docker-specific API or run a TeX compile each time.
 
 Typr reaches the Dockerized Companion exactly as it reaches the directly-run server: its default URL is already `http://127.0.0.1:8484`. Start Typr normally and it will detect the container through its existing status lifecycle. A user can change the URL at runtime under **Settings → Editor → Typr Companion**; the value is stored in that browser. `VITE_TYPR_COMPANION_URL` changes the build's default URL for a custom deployment.
 
@@ -106,6 +120,8 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_VERSION` | injected by the image build | Packaged server version reported by `/api/v1/status`; independent of protocol version. |
 | `TYPR_COMPANION_HOST` | `0.0.0.0` | Container listen interface. Native development retains its `127.0.0.1` default. |
 | `TYPR_COMPANION_PORT` | `8484` | Companion TCP port. |
+| `TYPR_COMPANION_MANAGEMENT_PORT` | `8485` | Separate loopback management GUI port. It must differ from the service port. |
+| `TYPR_COMPANION_MANAGEMENT_STATE` | unset | Optional writable management-state JSON path for native non-Windows runs. Portable Windows uses its per-user application-data directory automatically. |
 | `TYPR_COMPANION_ALLOWED_ORIGINS` | official Typr and local Vite origins | Optional comma-separated exact-origin override, shared with the native server. |
 | `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
 | `TYPR_COMPANION_WORKSPACE_ID` | `default` | Opaque stable identity used by browser bindings; it is not a host path. |
@@ -394,7 +410,7 @@ Current trusted-local-use bounds are:
 | transmitted diagnostic log | 32 KiB |
 | render DPI | 72–300 (default 192) |
 
-Browser WebSocket upgrades reuse `TYPR_COMPANION_ALLOWED_ORIGINS`; a supplied origin outside the allowlist receives HTTP 403. Origin-less clients are permitted for local Node/CLI tooling. Unknown upgrade routes receive 404, client binary frames are fatal, malformed JSON and stale revisions are non-fatal, and an oversized WebSocket message is closed by `ws`. This is still an unauthenticated trusted-local endpoint. Keep Docker bound to loopback:
+Browser WebSocket upgrades reuse `TYPR_COMPANION_ALLOWED_ORIGINS`; a supplied origin outside the allowlist receives HTTP 403. Origin-less clients are permitted for local Node/CLI tooling. Unknown upgrade routes receive 404, client binary frames are fatal, malformed JSON and stale revisions are non-fatal, and an oversized WebSocket message is closed by `ws`. This remains a trusted-local endpoint even when API keys are required. Keep Docker bound to loopback:
 
 ```bash
 docker run --rm -p 127.0.0.1:8484:8484 typr-server:dev

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { lstat, mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
@@ -25,6 +26,9 @@ import { NativeProcessError, type NativeProcessResult } from "./nativeProcess.ts
 import { isBase64 } from "./base64.ts";
 import { runLatexProject } from "./latexProject.ts";
 import { nativeToolAvailable } from "./nativeTools.ts";
+import type { AccessStore } from "./accessStore.ts";
+import type { ActivityBus } from "./activity.ts";
+import type { CompanionRuntimeSnapshot } from "./serviceCatalog.ts";
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
@@ -53,6 +57,8 @@ export interface TyprServerOptions {
   isPdflatexAvailable?: () => Promise<boolean>;
   allowedOrigins?: ReadonlySet<string>;
   workspace?: WorkspaceStore;
+  access?: AccessStore;
+  activity?: ActivityBus;
 }
 
 interface ValidationSuccess {
@@ -73,8 +79,18 @@ interface RequestContext {
   serverVersion: string;
   activeCompilations: Set<AbortController>;
   activeLiveSessions: Set<TexpressoLiveSession>;
+  activeRequests: Set<string>;
   webSocketServer: WebSocketServer;
   workspace?: WorkspaceStore;
+  access?: AccessStore;
+  activity?: ActivityBus;
+}
+
+interface RequestTrace {
+  id: string;
+  serviceId: string;
+  startedAt: number;
+  userId?: string;
 }
 
 let pdflatexAvailability: Promise<boolean> | undefined;
@@ -88,7 +104,8 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
   const webSocketServer = new WebSocketServer({
     noServer: true,
     maxPayload: TEXPRESSO_WS_LIMITS.maxMessageBytes,
-    perMessageDeflate: false
+    perMessageDeflate: false,
+    handleProtocols: (protocols) => protocols.has("typr-companion-v1") ? "typr-companion-v1" : false
   });
   const context: RequestContext = {
     isPdflatexAvailable,
@@ -96,13 +113,43 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
     serverVersion,
     activeCompilations: new Set(),
     activeLiveSessions: new Set(),
+    activeRequests: new Set(),
     webSocketServer,
-    workspace: options.workspace
+    workspace: options.workspace,
+    access: options.access,
+    activity: options.activity
   };
 
   const server = createServer(async (request, response) => {
+    const trace: RequestTrace = {
+      id: randomUUID(),
+      serviceId: serviceIdForPath(new URL(request.url ?? "/", "http://127.0.0.1").pathname),
+      startedAt: performance.now()
+    };
+    context.activeRequests.add(trace.id);
+    context.activity?.publish({
+      serviceId: trace.serviceId,
+      level: "info",
+      type: "request-started",
+      message: `${request.method ?? "UNKNOWN"} ${new URL(request.url ?? "/", "http://127.0.0.1").pathname} started.`,
+      requestId: trace.id
+    });
+    response.once("finish", () => {
+      context.activeRequests.delete(trace.id);
+      context.activity?.publish({
+        serviceId: trace.serviceId,
+        level: response.statusCode >= 500 ? "error" : response.statusCode >= 400 ? "warning" : "info",
+        type: "request-completed",
+        message: `${request.method ?? "UNKNOWN"} ${new URL(request.url ?? "/", "http://127.0.0.1").pathname} completed with ${response.statusCode}.`,
+        requestId: trace.id,
+        ...(trace.userId ? { userId: trace.userId } : {}),
+        durationMs: Math.round(performance.now() - trace.startedAt),
+        metadata: { status: response.statusCode }
+      });
+    });
+    response.once("close", () => context.activeRequests.delete(trace.id));
     try {
-      await handleRequest(request, response, context);
+      await handleRequest(request, response, context, trace);
     } catch (error) {
       // Never let malformed network input terminate the local server process.
       if (error instanceof WorkspaceError) {
@@ -118,13 +165,35 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
     }
   });
   server.on("upgrade", (request, socket, head) => {
+    void handleUpgrade(request, socket, head, context).catch((error) => {
+      rejectUpgrade(socket, 500, error instanceof Error ? error.message : "WebSocket setup failed.");
+    });
+  });
+  serverContexts.set(server, context);
+  return server;
+}
+
+async function handleUpgrade(
+  request: IncomingMessage,
+  socket: import("node:stream").Duplex,
+  head: Buffer,
+  context: RequestContext
+): Promise<void> {
     const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
     if (pathname !== TEXPRESSO_WS_ROUTE) {
       rejectUpgrade(socket, 404, "No experimental WebSocket route matches this request.");
       return;
     }
+    if (context.access) {
+      const authorization = webSocketAuthorization(request);
+      const access = await context.access.authorize(authorization);
+      if (!access.ok) {
+        rejectUpgrade(socket, 401, access.message);
+        return;
+      }
+    }
     const origin = request.headers.origin;
-    if (origin && !allowedOrigins.has(origin)) {
+    if (origin && !context.allowedOrigins.has(origin)) {
       rejectUpgrade(socket, 403, "WebSocket origin is not allowed.");
       return;
     }
@@ -132,14 +201,23 @@ export function createTyprServer(options: TyprServerOptions = {}): Server {
       rejectUpgrade(socket, 429, "Companion is already running its maximum number of live compiler sessions.");
       return;
     }
-    webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+    context.webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
       let liveSession: TexpressoLiveSession;
       liveSession = new TexpressoLiveSession(webSocket, () => context.activeLiveSessions.delete(liveSession));
       context.activeLiveSessions.add(liveSession);
+      context.activity?.publish({
+        serviceId: "live-preview",
+        level: "info",
+        type: "session-opened",
+        message: "A live-preview session connected."
+      });
+      webSocket.once("close", () => context.activity?.publish({
+        serviceId: "live-preview",
+        level: "info",
+        type: "session-closed",
+        message: "A live-preview session disconnected."
+      }));
     });
-  });
-  serverContexts.set(server, context);
-  return server;
 }
 
 /** Stops new work and terminates active compiler and TeXpresso process groups before closing. */
@@ -161,6 +239,18 @@ export async function shutdownTyprServer(server: Server): Promise<void> {
 export async function hostHasPdflatex(): Promise<boolean> {
   pdflatexAvailability ??= nativeToolAvailable("pdflatex");
   return pdflatexAvailability;
+}
+
+export function getCompanionRuntimeSnapshot(server: Server): CompanionRuntimeSnapshot {
+  const context = serverContexts.get(server);
+  if (!context) throw new Error("Server is not a Typr Companion server.");
+  return {
+    serverVersion: context.serverVersion,
+    activeRequests: context.activeRequests.size,
+    activeCompilations: context.activeCompilations.size,
+    activeLiveSessions: context.activeLiveSessions.size,
+    ...(context.workspace ? { workspace: { id: context.workspace.workspaceId, writable: true } } : {})
+  };
 }
 
 export function validateCompileRequest(value: unknown): ValidationResult {
@@ -262,7 +352,8 @@ export function validateCompileRequest(value: unknown): ValidationResult {
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  context: RequestContext
+  context: RequestContext,
+  trace: RequestTrace
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   applyCorsHeaders(request, response, context.allowedOrigins, url.pathname);
@@ -290,6 +381,20 @@ async function handleRequest(
     }
     response.writeHead(204).end();
     return;
+  }
+
+  if (context.access) {
+    const rawAuthorization = request.headers.authorization;
+    const authorization = typeof rawAuthorization === "string"
+      ? rawAuthorization
+      : rawAuthorization ? "invalid-authorization-header" : undefined;
+    const access = await context.access.authorize(authorization);
+    if (!access.ok) {
+      response.setHeader("WWW-Authenticate", 'Bearer realm="Typr Companion"');
+      sendJson(response, 401, { error: { code: "api-key-required", message: access.message } });
+      return;
+    }
+    trace.userId = access.principal?.userId;
   }
 
   if (request.method === "GET" && url.pathname === TYPR_COMPANION_ROUTES.status) {
@@ -368,6 +473,17 @@ async function handleRequest(
     } finally {
       context.activeCompilations.delete(compilation);
     }
+    context.activity?.publish({
+      serviceId: "latex",
+      level: result.ok ? "info" : "error",
+      type: result.ok ? "compile-succeeded" : "compile-failed",
+      message: `${validation.request.engine} ${result.ok ? "produced a PDF" : "failed"} in ${result.durationMs ?? 0} ms.`,
+      requestId: trace.id,
+      ...(trace.userId ? { userId: trace.userId } : {}),
+      durationMs: result.durationMs,
+      ...(result.log ? { details: result.log } : {}),
+      metadata: { engine: validation.request.engine, files: validation.request.files.length, ok: result.ok }
+    });
     sendJson(response, 200, result);
     return;
   }
@@ -728,21 +844,21 @@ function validateCorsPreflight(
 
 function getCorsRoutePolicy(pathname: string): CorsRoutePolicy | undefined {
   if (pathname === TYPR_COMPANION_ROUTES.status) {
-    return { methods: ["GET"], headersByMethod: { GET: [] } };
+    return { methods: ["GET"], headersByMethod: { GET: ["Authorization"] } };
   }
   if (pathname === TYPR_COMPANION_ROUTES.compile) {
-    return { methods: ["POST"], headersByMethod: { POST: ["Content-Type"] } };
+    return { methods: ["POST"], headersByMethod: { POST: ["Content-Type", "Authorization"] } };
   }
   if (pathname === TYPR_COMPANION_ROUTES.workspaceFiles) {
-    return { methods: ["GET"], headersByMethod: { GET: [] } };
+    return { methods: ["GET"], headersByMethod: { GET: ["Authorization"] } };
   }
   if (pathname === TYPR_COMPANION_ROUTES.workspaceFile) {
     return {
       methods: ["GET", "PUT", "DELETE"],
       headersByMethod: {
-        GET: [],
-        PUT: ["Content-Type", "If-Match", "If-None-Match", TYPR_WORKSPACE_MUTATION_HEADER],
-        DELETE: ["If-Match", TYPR_WORKSPACE_MUTATION_HEADER]
+        GET: ["Authorization"],
+        PUT: ["Content-Type", "Authorization", "If-Match", "If-None-Match", TYPR_WORKSPACE_MUTATION_HEADER],
+        DELETE: ["Authorization", "If-Match", TYPR_WORKSPACE_MUTATION_HEADER]
       }
     };
   }
@@ -759,6 +875,29 @@ function getAllowedOriginsFromEnvironment(): ReadonlySet<string> {
 
 function isWorkspaceRoute(pathname: string): boolean {
   return pathname === TYPR_COMPANION_ROUTES.workspaceFiles || pathname === TYPR_COMPANION_ROUTES.workspaceFile;
+}
+
+function serviceIdForPath(pathname: string): string {
+  if (pathname === TYPR_COMPANION_ROUTES.compile) return "latex";
+  if (isWorkspaceRoute(pathname)) return "workspace";
+  if (pathname === TEXPRESSO_WS_ROUTE) return "live-preview";
+  return "companion-api";
+}
+
+function webSocketAuthorization(request: IncomingMessage): string | undefined {
+  const authorization = request.headers.authorization;
+  if (typeof authorization === "string") return authorization;
+  const protocolHeader = request.headers["sec-websocket-protocol"];
+  if (typeof protocolHeader !== "string") return undefined;
+  const encoded = protocolHeader.split(",").map((protocol) => protocol.trim())
+    .find((protocol) => protocol.startsWith("typr-api-key."))?.slice("typr-api-key.".length);
+  if (!encoded) return undefined;
+  try {
+    const secret = Buffer.from(encoded, "base64url").toString("utf8");
+    return `Bearer ${secret}`;
+  } catch {
+    return "invalid-websocket-api-key";
+  }
 }
 
 function requireWorkspaceMutationHeader(request: IncomingMessage): void {
@@ -814,7 +953,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 
 function rejectUpgrade(socket: import("node:stream").Duplex, status: number, message: string): void {
   const body = `${message}\n`;
-  const statusText = status === 403 ? "Forbidden" : status === 429 ? "Too Many Requests" : "Not Found";
+  const statusText = status === 401 ? "Unauthorized" : status === 403 ? "Forbidden" :
+    status === 429 ? "Too Many Requests" : status === 500 ? "Internal Server Error" : "Not Found";
   socket.end(
     `HTTP/1.1 ${status} ${statusText}\r\n` +
     "Connection: close\r\n" +

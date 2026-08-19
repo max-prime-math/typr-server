@@ -18,5 +18,5 @@ services:
     cpus: 2.0
     stop_grace_period: 15s
     ports:
-      # Keep the unauthenticated Companion private to this machine.
+      # Keep the trusted-local Companion private to this machine.
       - "${TYPR_COMPANION_BIND_ADDRESS:-127.0.0.1}:${TYPR_COMPANION_PORT:-8484}:8484"

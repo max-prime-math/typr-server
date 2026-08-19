@@ -135,6 +135,6 @@ USER node
 EXPOSE 8484
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8484/api/v1/status').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:8484/api/v1/status').then((response) => process.exit(response.ok || response.status === 401 ? 0 : 1)).catch(() => process.exit(1))"]
 
 CMD ["node", "--experimental-strip-types", "typr-server/cli.ts"]

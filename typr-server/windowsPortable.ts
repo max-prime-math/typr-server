@@ -15,8 +15,7 @@ const TINYTEX_ASSET = "tinytex-installer.exe";
 export async function prepareWindowsPortableRuntime(): Promise<void> {
   if (process.platform !== "win32") return;
 
-  const localData = process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local");
-  const dataRoot = join(localData, "Typr Companion");
+  const dataRoot = windowsCompanionDataRoot();
   const version = typeof TYPR_WINDOWS_BUILD_VERSION === "string" && TYPR_WINDOWS_BUILD_VERSION
     ? TYPR_WINDOWS_BUILD_VERSION
     : "development";
@@ -62,6 +61,11 @@ export async function prepareWindowsPortableRuntime(): Promise<void> {
     process.env.TYPR_COMPANION_WORKSPACE_ROOT = workspace;
     process.env.TYPR_COMPANION_WORKSPACE_ID = "windows-local";
   }
+}
+
+export function windowsCompanionDataRoot(): string {
+  const localData = process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local");
+  return join(localData, "Typr Companion");
 }
 
 async function executableExists(path: string): Promise<boolean> {

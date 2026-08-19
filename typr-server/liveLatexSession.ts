@@ -29,13 +29,15 @@ export async function startLiveLatexSession(options: TexpressoSessionOptions): P
 class FullCompileLiveSession implements LiveLatexSession {
   readonly pid = process.pid;
 
+  private readonly options: TexpressoSessionOptions;
   private readonly buffers = new Map<string, string>();
   private readonly renderedPages = new Map<string, TexpressoRenderedPage>();
   private readonly abortController = new AbortController();
   private snapshotValue: TexpressoSnapshot = emptySnapshot();
   private closed = false;
 
-  private constructor(private readonly options: TexpressoSessionOptions) {
+  private constructor(options: TexpressoSessionOptions) {
+    this.options = options;
     for (const file of options.files) this.buffers.set(normalizePath(file.path), file.content);
   }
 

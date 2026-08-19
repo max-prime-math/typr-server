@@ -59,7 +59,8 @@ rebuild over that version.
 The separate Windows workflow builds on `windows-2025` with Node's native SEA
 builder, embeds the SHA-256-pinned TinyTeX runtime and MuPDF WebAssembly, runs
 the Windows unit suite, and exercises first-run offline extraction, REST
-compilation, the workspace API, and the live-preview fallback. A tagged build
+compilation, the separate management GUI, user/API-key enforcement, the
+workspace API, and the live-preview fallback. A tagged build
 must have an annotated tag matching `companion-release.json` and must be
 Authenticode-signed; missing signing secrets fail publication. The verified
 `typr-companion-windows-x64.exe` is attached to the exact GitHub Release without
