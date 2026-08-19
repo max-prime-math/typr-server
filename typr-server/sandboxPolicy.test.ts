@@ -12,6 +12,7 @@ describe("native sandbox startup policy", () => {
   it("keeps the verified launcher when its probe succeeds", async () => {
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: false,
+      platform: "linux",
       sandboxExecutable: "/sandbox",
       accessExecutable: succeeds,
       probeSandbox: succeeds
@@ -21,6 +22,7 @@ describe("native sandbox startup policy", () => {
   it("fails closed by default when the launcher probe fails", async () => {
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: false,
+      platform: "linux",
       sandboxExecutable: "/sandbox",
       accessExecutable: succeeds,
       probeSandbox: fails
@@ -31,6 +33,7 @@ describe("native sandbox startup policy", () => {
     const onFallback = vi.fn();
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: true,
+      platform: "linux",
       sandboxExecutable: "/sandbox",
       accessExecutable: succeeds,
       probeSandbox: fails,
@@ -45,6 +48,7 @@ describe("native sandbox startup policy", () => {
     const onFallback = vi.fn();
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: true,
+      platform: "linux",
       assertVolumeFree,
       onFallback
     })).resolves.toBeUndefined();
@@ -55,6 +59,7 @@ describe("native sandbox startup policy", () => {
   it("still refuses a mapped workspace when fallback is enabled", async () => {
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: true,
+      platform: "linux",
       sandboxExecutable: "/sandbox",
       workspaceRoot: "/workspace",
       accessExecutable: succeeds,
@@ -66,6 +71,7 @@ describe("native sandbox startup policy", () => {
   it("still refuses a mapped workspace without a launcher", async () => {
     await expect(resolveNativeSandbox({
       allowUnsandboxedStateless: true,
+      platform: "linux",
       workspaceRoot: "/workspace"
     })).rejects.toThrow(/mapped workspace requires/u);
   });
