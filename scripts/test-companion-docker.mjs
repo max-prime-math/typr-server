@@ -210,10 +210,20 @@ try {
     headers: {
       Origin: "https://typr.ca",
       "Access-Control-Request-Method": "PUT",
-      "Access-Control-Request-Headers": "authorization"
+      "Access-Control-Request-Headers": "x-unsupported-companion-header"
     }
   });
   assert(wrongHeaderPreflight.status === 400, "Workspace CORS preflight must reject unsupported headers.");
+  const authorizationPreflight = await fetch(`${baseUrl}/api/v1/workspace/file?path=origin-canary`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://typr.ca",
+      "Access-Control-Request-Method": "PUT",
+      "Access-Control-Request-Headers": "authorization, content-type, if-none-match, x-typr-workspace-mutation"
+    }
+  });
+  assert(authorizationPreflight.status === 204,
+    "Workspace CORS preflight must allow the API-key authorization header on supported methods.");
 
   const apiFileUrl = `${baseUrl}/api/v1/workspace/file?path=nested%2Fapi-created.bin`;
   const missingPrecondition = await fetch(apiFileUrl, {

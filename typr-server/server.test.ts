@@ -78,7 +78,7 @@ describe("typr-server Companion API", () => {
     const headers = {
       Origin: "https://typr.ca",
       "Access-Control-Request-Method": "PUT",
-      "Access-Control-Request-Headers": `content-type, if-none-match, ${TYPR_WORKSPACE_MUTATION_HEADER}`
+      "Access-Control-Request-Headers": `authorization, content-type, if-none-match, ${TYPR_WORKSPACE_MUTATION_HEADER}`
     };
     const allowed = await fetch(`${baseUrl}${TYPR_COMPANION_ROUTES.workspaceFile}?path=file.txt`, {
       method: "OPTIONS",
