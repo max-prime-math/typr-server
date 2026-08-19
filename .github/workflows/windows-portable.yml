@@ -1,0 +1,99 @@
+name: Windows portable Companion
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TINYTEX_URL: https://github.com/rstudio/tinytex-releases/releases/download/v2026.08/TinyTeX-windows-v2026.08.exe
+  TINYTEX_SHA256: e8d5e44ea9ffaf3b82c2f23ad4c3738c4d9e89bc5af59a7be558a1154c6d0f48
+
+jobs:
+  build-and-test:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 26.7.0
+          cache: npm
+      - run: npm ci
+      - name: Validate tagged release identity
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $declared = (Get-Content companion-release.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$declared") { throw "Tag/version mismatch." }
+          if ((git cat-file -t "refs/tags/$env:GITHUB_REF_NAME") -ne "tag") { throw "Windows releases require an annotated tag." }
+      - run: npm run typecheck
+      - run: npm test
+      - name: Download and verify the embedded offline TeX runtime
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:TINYTEX_URL -OutFile "$env:RUNNER_TEMP\TinyTeX.exe"
+          $actual = (Get-FileHash "$env:RUNNER_TEMP\TinyTeX.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:TINYTEX_SHA256) { throw "TinyTeX checksum mismatch: $actual" }
+      - name: Build the single executable
+        shell: pwsh
+        env:
+          TYPR_WINDOWS_TINYTEX_INSTALLER: ${{ runner.temp }}\TinyTeX.exe
+        run: npm run build:windows
+      - name: Authenticode-sign tagged release executable
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: |
+          if (!$env:WINDOWS_CODESIGN_PFX_BASE64 -or !$env:WINDOWS_CODESIGN_PASSWORD) {
+            throw "Tagged Windows releases require the Authenticode signing secrets."
+          }
+          $pfx = "$env:RUNNER_TEMP\typr-codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CODESIGN_PFX_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object FullName -Match '\\x64\\signtool.exe$' | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$signtool) { throw "signtool.exe was not found." }
+          & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f $pfx /p $env:WINDOWS_CODESIGN_PASSWORD dist/windows/typr-companion-windows-x64.exe
+          & $signtool.FullName verify /pa /v dist/windows/typr-companion-windows-x64.exe
+          Remove-Item $pfx -Force
+      - name: Exercise offline extraction, status, compile, workspace, and live-preview fallback
+        shell: pwsh
+        run: node scripts/test-windows-exe.mjs dist/windows/typr-companion-windows-x64.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: typr-companion-windows-x64
+          path: dist/windows/typr-companion-windows-x64.exe
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-and-test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: typr-companion-windows-x64
+          path: release
+      - name: Attach the verified executable without replacing an existing asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          asset=release/typr-companion-windows-x64.exe
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${asset}"
+          else
+            gh release create "${GITHUB_REF_NAME}" "${asset}" --verify-tag --title "Typr Companion ${GITHUB_REF_NAME#v}" --generate-notes
+          fi

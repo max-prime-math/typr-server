@@ -69,6 +69,17 @@ describe("native sandbox startup policy", () => {
       workspaceRoot: "/workspace"
     })).rejects.toThrow(/mapped workspace requires/u);
   });
+
+  it("starts per-user Windows mode without Landlock or administrator setup", async () => {
+    const onFallback = vi.fn();
+    await expect(resolveNativeSandbox({
+      allowUnsandboxedStateless: false,
+      workspaceRoot: "C:\\Users\\person\\Typr",
+      platform: "win32",
+      onFallback
+    })).resolves.toBeUndefined();
+    expect(onFallback).toHaveBeenCalledWith(expect.stringMatching(/Windows portable mode/u));
+  });
 });
 
 describe("stateless fallback mount policy", () => {

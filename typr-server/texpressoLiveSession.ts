@@ -16,10 +16,10 @@ import {
   type TexpressoServerMessage
 } from "./texpressoWsProtocol.ts";
 import {
-  TexpressoSession,
   type TexpressoRenderedPage,
   type TexpressoSnapshot
 } from "./texpressoSession.ts";
+import { startLiveLatexSession, type LiveLatexSession } from "./liveLatexSession.ts";
 
 interface QueuedChange {
   message: TexpressoChangeMessage;
@@ -37,7 +37,7 @@ export class TexpressoLiveSession {
   private readonly sessionId = randomUUID();
   private readonly queue: QueuedChange[] = [];
   private workspace: string | undefined;
-  private session: TexpressoSession | undefined;
+  private session: LiveLatexSession | undefined;
   private renderDpi: number = TEXPRESSO_WS_LIMITS.defaultDpi;
   private initialized = false;
   private initializing = false;
@@ -141,7 +141,7 @@ export class TexpressoLiveSession {
       const textFiles = message.files
         .filter((file): file is Extract<typeof file, { kind: "text" }> => file.kind === "text")
         .map((file) => ({ path: file.path, content: file.content }));
-      const session = await TexpressoSession.start({
+      const session = await startLiveLatexSession({
         projectRoot: this.workspace,
         mainFilePath: message.mainFilePath,
         files: textFiles,

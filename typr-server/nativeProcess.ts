@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const MAX_CAPTURE_BYTES = 1024 * 1024;
 const KILL_GRACE_MS = 1500;
@@ -30,18 +30,33 @@ export async function prepareCompilerEnvironment(
   const texmf = join(cwd, ".typr-texmf");
   const cache = join(cwd, ".typr-cache");
   await Promise.all([mkdir(home, { recursive: true }), mkdir(texmf, { recursive: true }), mkdir(cache, { recursive: true })]);
+  const configuredNativePath = process.env.TYPR_COMPANION_NATIVE_PATH?.trim();
+  const path = configuredNativePath || (process.platform === "win32"
+    ? process.env.PATH ?? process.env.Path ?? ""
+    : "/usr/local/bin:/usr/bin:/bin");
   return {
-    PATH: "/usr/local/bin:/usr/bin:/bin",
+    PATH: path.split(delimiter).filter(Boolean).join(delimiter),
     LANG: "C.UTF-8",
     LC_ALL: "C.UTF-8",
     HOME: home,
     TMPDIR: cwd,
+    ...(process.platform === "win32" ? {
+      USERPROFILE: home,
+      TEMP: cwd,
+      TMP: cwd,
+      // Windows cannot start even an absolute .exe without these system values.
+      SystemRoot: process.env.SystemRoot,
+      WINDIR: process.env.WINDIR,
+      ComSpec: process.env.ComSpec,
+      PATHEXT: process.env.PATHEXT
+    } : {}),
     TEXMFHOME: texmf,
     TEXMFVAR: join(texmf, "var"),
     TEXMFCONFIG: join(texmf, "config"),
     TEXMFCACHE: cache,
     TEXMFOUTPUT: cwd,
     shell_escape: "f",
+    openin_any: "p",
     openout_any: "p",
     SDL_VIDEODRIVER: "dummy",
     ...extra
@@ -86,7 +101,14 @@ export async function runNativeProcess(
     const signalGroup = (childSignal: NodeJS.Signals) => {
       try {
         if (detached && child.pid) process.kill(-child.pid, childSignal);
-        else child.kill(childSignal);
+        else if (process.platform === "win32" && child.pid) {
+          // taskkill /T is the only Windows-inbox way to terminate latexmk and
+          // every TeX child it owns. It needs no elevation for this user's tree.
+          const arguments_ = ["/pid", String(child.pid), "/t"];
+          if (childSignal === "SIGKILL") arguments_.push("/f");
+          const killer = spawn("taskkill.exe", arguments_, { shell: false, stdio: "ignore" });
+          killer.on("error", () => child.kill());
+        } else child.kill(childSignal);
       } catch {
         // The process may have exited between deciding to stop it and signalling it.
       }

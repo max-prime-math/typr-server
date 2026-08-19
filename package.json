@@ -22,6 +22,7 @@
   },
   "scripts": {
     "companion": "node --experimental-strip-types typr-server/cli.ts",
+    "build:windows": "node scripts/build-windows-exe.mjs",
     "typecheck": "tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run src/companion-protocol typr-server",
@@ -34,11 +35,13 @@
     "test:texpresso:ws": "node scripts/test-texpresso-ws-docker.mjs"
   },
   "dependencies": {
+    "mupdf": "1.28.0",
     "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
     "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
     "typescript": "5.8.3",
     "vitest": "4.1.7"
   }

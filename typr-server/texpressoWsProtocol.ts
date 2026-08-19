@@ -15,6 +15,7 @@ import {
 } from "../src/companion-protocol/texpresso.ts";
 import type { ProjectFile } from "../src/companion-protocol/index.ts";
 import { isBase64 } from "./base64.ts";
+import { isWindowsUnsafePathSegment } from "./projectFiles.ts";
 
 export { TEXPRESSO_WS_PROTOCOL_VERSION, TEXPRESSO_WS_ROUTE };
 export type {
@@ -166,7 +167,11 @@ function validatePrivateProjectPath(value: unknown, label: string): string | und
   if (value === "." || value.endsWith("/") || value.includes("\0") || value.includes("\\") || value.startsWith("/") || /^[A-Za-z]:/.test(value)) {
     return `${label} must be a safe relative POSIX path.`;
   }
-  if (value.split("/").some((segment) => segment === ".." || segment === "")) return `${label} must not contain traversal or empty segments.`;
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === ".." || segment === "")) return `${label} must not contain traversal or empty segments.`;
+  if (process.platform === "win32" && segments.some(isWindowsUnsafePathSegment)) {
+    return `${label} contains a file name that Windows cannot store safely.`;
+  }
   return undefined;
 }
 

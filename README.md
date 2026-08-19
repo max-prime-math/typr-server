@@ -19,8 +19,9 @@ multi-tenant service—all users and documents must still be mutually trusted.
 
 ## Install
 
-See [the installation guide](docs/companion-installation.md) for Docker,
-Compose, version pinning, rollback, platform support, and security guidance.
+See [the installation guide](docs/companion-installation.md) for the portable
+Windows executable, Docker, Compose, version pinning, rollback, platform
+support, and security guidance.
 The production [`compose.yaml`](compose.yaml) stays stateless by default; the
 separate [`compose.workspace.yaml`](compose.workspace.yaml) override enables one
 exact administrator-selected directory. Unraid users should follow the

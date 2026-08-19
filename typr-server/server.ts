@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { lstat, mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,8 +21,10 @@ import { materializeProjectFiles, resolveProjectPath, validateProjectPath } from
 import { TexpressoLiveSession } from "./texpressoLiveSession.ts";
 import { TEXPRESSO_WS_LIMITS, TEXPRESSO_WS_ROUTE } from "./texpressoWsProtocol.ts";
 import { WorkspaceError, type WorkspaceStore } from "./workspaceStore.ts";
-import { NativeProcessError, runNativeProcess, type NativeProcessResult } from "./nativeProcess.ts";
+import { NativeProcessError, type NativeProcessResult } from "./nativeProcess.ts";
 import { isBase64 } from "./base64.ts";
+import { runLatexProject } from "./latexProject.ts";
+import { nativeToolAvailable } from "./nativeTools.ts";
 
 export { materializeProjectFiles } from "./projectFiles.ts";
 
@@ -158,7 +159,7 @@ export async function shutdownTyprServer(server: Server): Promise<void> {
 }
 
 export async function hostHasPdflatex(): Promise<boolean> {
-  pdflatexAvailability ??= commandAvailable("pdflatex");
+  pdflatexAvailability ??= nativeToolAvailable("pdflatex");
   return pdflatexAvailability;
 }
 
@@ -484,7 +485,7 @@ async function compileProject(
   signal?.addEventListener("abort", relayAbort, { once: true });
   try {
     await materializeProjectFiles(workspace, request.files);
-    const nativeResult = await runPdflatexProject(workspace, request.mainFilePath, deadline.signal);
+    const nativeResult = await runLatexProject(workspace, request.mainFilePath, deadline.signal);
     const log = await collectCompileLog(workspace, request.mainFilePath, nativeResult);
     const pdfPath = await findOutputPdf(workspace, request.mainFilePath);
 
@@ -532,36 +533,6 @@ async function compileProject(
     signal?.removeEventListener("abort", relayAbort);
     await rm(workspace, { recursive: true, force: true });
   }
-}
-
-async function runPdflatexProject(
-  workspace: string,
-  mainFilePath: string,
-  signal?: AbortSignal
-): Promise<NativeProcessResult> {
-  if (await commandAvailable("latexmk")) {
-    return runNativeProcess(
-      "latexmk",
-      ["-norc", "-pdf", "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
-      workspace,
-      signal ?? new AbortController().signal
-    );
-  }
-
-  let result: NativeProcessResult = { exitCode: 0, signal: null, stdout: "", stderr: "" };
-  for (let pass = 1; pass <= 3; pass += 1) {
-    result = await runNativeProcess(
-      "pdflatex",
-      ["-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
-      workspace,
-      signal ?? new AbortController().signal
-    );
-    result.stdout = `--- pdflatex pass ${pass} ---\n${result.stdout}`;
-    if (result.exitCode !== 0) {
-      break;
-    }
-  }
-  return result;
 }
 
 async function collectCompileLog(
@@ -784,14 +755,6 @@ function getAllowedOriginsFromEnvironment(): ReadonlySet<string> {
     return DEFAULT_ALLOWED_ORIGINS;
   }
   return new Set(configured.split(",").map((origin) => origin.trim()).filter(Boolean));
-}
-
-function commandAvailable(command: string): Promise<boolean> {
-  return new Promise((resolveAvailability) => {
-    const child = spawn(command, ["--version"], { shell: false, stdio: "ignore" });
-    child.once("error", () => resolveAvailability(false));
-    child.once("close", (code) => resolveAvailability(code === 0));
-  });
 }
 
 function isWorkspaceRoute(pathname: string): boolean {

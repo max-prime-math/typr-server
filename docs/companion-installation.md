@@ -4,19 +4,64 @@ title: Install Typr Companion
 
 # Install Typr Companion
 
-Typr Companion supplies native `latexmk`/pdfLaTeX compilation, an optional tightly scoped mapped workspace, and the experimental TeXpresso live preview to the Typr PWA. It runs separately from the PWA. Browser-local storage remains Typr's default; no workspace is exposed unless an administrator maps one. The official image is:
+Typr Companion supplies native `latexmk`/pdfLaTeX compilation, a tightly
+scoped workspace, and live preview to the Typr PWA. It runs separately from the
+PWA. Browser-local storage remains Typr's default. The Windows executable uses
+a dedicated per-user workspace; the container exposes no workspace unless an
+administrator maps one. The official image is:
 
 ```text
 ghcr.io/max-prime-math/typr-server
 ```
 
-## Requirements
+## Windows portable executable
 
-- Docker Engine on Linux, or Docker Desktop on Windows/macOS.
+Release builds include `typr-companion-windows-x64.exe`. Copy that one file to
+the Windows machine and run it as the ordinary signed-in user. It binds only to
+`127.0.0.1:8484`; it does not install a service, request elevation, write the
+registry, add a firewall rule, or download packages. On first launch it extracts
+its embedded, checksum-pinned TinyTeX runtime under
+`%LOCALAPPDATA%\Typr Companion\runtime\<version>` and creates the dedicated
+workspace `%LOCALAPPDATA%\Typr Companion\workspace`. Later launches reuse the
+same per-user files. Deleting `%LOCALAPPDATA%\Typr Companion` uninstalls that
+runtime and workspace; back up the workspace first if it contains documents.
+
+Native final compilation and the workspace API use the same Companion protocol
+as Docker. Because upstream TeXpresso does not support Windows, live preview
+uses an offline compatibility backend: it performs a shell-escape-disabled full
+pdfLaTeX build after each accepted edit and rasterizes pages with embedded
+MuPDF WebAssembly. The result and recovery behavior are compatible with Typr,
+but updates are slower than TeXpresso's incremental Linux backend.
+
+The executable makes no outbound network requests at runtime, so it works when
+the host firewall blocks Internet access. The browser must still be permitted
+to connect to loopback. Enterprise WDAC/AppLocker policies may require the
+release publisher or file hash to be allow-listed by IT; the executable does
+not and must not attempt to bypass those policies. Official tagged Windows
+artifacts must be Authenticode-signed. Development/PR artifacts are unsigned
+and are not intended for locked-down production machines.
+
+Windows native compiler children use a minimal environment, paranoid TeX input
+and output policies, disabled shell escape, isolated temporary directories,
+output/time limits, and whole-process-tree termination. Windows has no direct
+equivalent of the image's Landlock launcher, so use documents trusted by the
+signed-in Windows account. The service remains local and unauthenticated.
+
+Configuration remains available through `TYPR_COMPANION_PORT`,
+`TYPR_COMPANION_HOST`, `TYPR_COMPANION_ALLOWED_ORIGINS`,
+`TYPR_COMPANION_WORKSPACE_ROOT`, and `TYPR_COMPANION_WORKSPACE_ID`. Keep the
+default loopback host on a locked-down machine. Setting a workspace root before
+launch replaces the default dedicated directory.
+
+## Container requirements
+
+- Docker Engine on Linux, or Docker Desktop on Windows/macOS, when using the
+  container instead of the native Windows executable.
 - A `linux/amd64` or `linux/arm64` Docker host.
 - Typr and the Companion must be used on one trusted machine, a trusted LAN, or a private VPN. They are not public-internet services.
 
-Windows uses Docker Desktop with its WSL2 backend, macOS uses Docker Desktop, and Linux uses Docker Engine. Native Windows and macOS Companion packages are intentionally not required.
+Windows container users use Docker Desktop with its WSL2 backend, macOS uses
+Docker Desktop, and Linux uses Docker Engine.
 
 ## Install
 
@@ -208,7 +253,9 @@ There is no Companion cache volume to remove and uninstalling the container does
 ## Platform notes
 
 - **Linux:** use Docker Engine. Native amd64 is the primary current development/runtime environment.
-- **Windows:** use Docker Desktop with the WSL2 backend. The image is Linux-based; no native Windows TeX setup is needed.
+- **Windows:** use the portable x64 executable for a no-admin, offline local
+  setup. Docker Desktop with WSL2 remains supported for the Linux TeXpresso
+  backend.
 - **macOS:** use Docker Desktop. Apple Silicon selects the arm64 image; Intel Macs select amd64.
 - **Unraid:** use the provided [Typr Companion Unraid template](./companion-unraid.md). It is stateless unless one exact workspace is explicitly configured. Because the browser and NAS are separate devices, use a trusted HTTPS reverse proxy restricted to your LAN/VPN and configure that URL in Typr. Host-level Tailscale Serve is supported; the per-container Tailscale hook is not. The service is unauthenticated and must not be exposed publicly.
 

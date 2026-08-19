@@ -7,6 +7,7 @@ import {
   WorkspaceStore,
   validateWorkspacePath
 } from "./workspaceStore.ts";
+import { validateProjectPath } from "./projectFiles.ts";
 
 const roots: string[] = [];
 
@@ -102,6 +103,15 @@ describe("WorkspaceStore", () => {
     for (const path of invalid) {
       expect(() => validateWorkspacePath(path)).toThrow(WorkspaceError);
     }
+  });
+
+  it("rejects Windows device names, alternate streams, and invalid file names", () => {
+    for (const path of ["CON", "aux.tex", "folder/name:stream", "folder/trailing. ", "bad?.tex"]) {
+      expect(() => validateWorkspacePath(path, "win32")).toThrow(WorkspaceError);
+    }
+    expect(validateWorkspacePath("chapters/valid.tex", "win32")).toBe("chapters/valid.tex");
+    expect(validateProjectPath("assets/name:stream", "project file", "win32")).toMatch(/Windows/u);
+    expect(validateProjectPath("chapters/valid.tex", "project file", "win32")).toBeUndefined();
   });
 
   it("rejects symlink roots and paths without reading or writing through them", async () => {

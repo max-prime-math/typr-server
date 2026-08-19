@@ -12,13 +12,14 @@ import {
   unlink
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, parse, resolve } from "node:path";
 import type {
   WorkspaceFileListResponse,
   WorkspaceFileMetadata,
   WorkspaceFileResponse,
   WorkspaceLimits
 } from "../src/companion-protocol/index.ts";
+import { isWindowsUnsafePathSegment } from "./projectFiles.ts";
 
 const INTERNAL_WRITE_PREFIX = ".typr-companion-write-";
 
@@ -79,8 +80,9 @@ export class WorkspaceStore {
   private readonly atomicWriteHook: WorkspaceStoreOptions["atomicWriteHook"];
 
   static async open(root: string, options: WorkspaceStoreOptions = {}): Promise<WorkspaceStore> {
-    if (!isAbsolute(root) || root.includes("\\") || resolve(root) === resolve("/")) {
-      throw new Error("TYPR_COMPANION_WORKSPACE_ROOT must be an absolute POSIX directory other than root.");
+    const resolvedRoot = resolve(root);
+    if (!isAbsolute(root) || resolvedRoot === parse(resolvedRoot).root) {
+      throw new Error("TYPR_COMPANION_WORKSPACE_ROOT must be an absolute directory other than a filesystem root.");
     }
     const rootInfo = await lstat(root);
     if (rootInfo.isSymbolicLink() || !rootInfo.isDirectory()) {
@@ -88,8 +90,8 @@ export class WorkspaceStore {
     }
     await access(root, constants.R_OK | constants.W_OK);
     const canonicalRoot = await realpath(root);
-    if (canonicalRoot === "/") {
-      throw new Error("TYPR_COMPANION_WORKSPACE_ROOT must not resolve to the filesystem root.");
+    if (canonicalRoot === parse(canonicalRoot).root) {
+      throw new Error("TYPR_COMPANION_WORKSPACE_ROOT must not resolve to a filesystem root.");
     }
     validateLimits(options.limits ?? DEFAULT_WORKSPACE_LIMITS);
     return new WorkspaceStore(canonicalRoot, options);
@@ -319,7 +321,7 @@ export class WorkspaceStore {
   }
 }
 
-export function validateWorkspacePath(value: unknown): string {
+export function validateWorkspacePath(value: unknown, platform: NodeJS.Platform = process.platform): string {
   if (typeof value !== "string" || value.length === 0 || value.includes("\\") || value.includes("\0") || isAbsolute(value)) {
     throw new WorkspaceError(400, "invalid-workspace-path", "Workspace path must be a non-empty relative POSIX path.");
   }
@@ -329,7 +331,8 @@ export function validateWorkspacePath(value: unknown): string {
   const segments = value.split("/");
   if (segments.length > MAX_PATH_DEPTH || segments.some((segment) =>
     segment.length === 0 || segment === "." || segment === ".." || segment === ".git" ||
-    segment.startsWith(INTERNAL_WRITE_PREFIX) || Buffer.byteLength(segment) > MAX_SEGMENT_BYTES || /[\u0000-\u001f\u007f]/u.test(segment)
+    segment.startsWith(INTERNAL_WRITE_PREFIX) || Buffer.byteLength(segment) > MAX_SEGMENT_BYTES || /[\u0000-\u001f\u007f]/u.test(segment) ||
+    (platform === "win32" && isWindowsUnsafePathSegment(segment))
   )) {
     throw new WorkspaceError(400, "invalid-workspace-path", "Workspace path contains a prohibited segment.");
   }

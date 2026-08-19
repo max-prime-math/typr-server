@@ -13,13 +13,27 @@ export async function materializeProjectFiles(root: string, files: readonly Proj
   }
 }
 
-export function validateProjectPath(value: unknown, label: string): string | undefined {
+export function validateProjectPath(
+  value: unknown,
+  label: string,
+  platform: NodeJS.Platform = process.platform
+): string | undefined {
   if (typeof value !== "string" || value.length === 0) return `${label} must be a non-empty relative path.`;
   if (value === "." || value.endsWith("/") || value.includes("\0") || value.includes("\\") || isAbsolute(value) || win32.isAbsolute(value)) {
     return `${label} must be a safe relative POSIX path.`;
   }
-  if (value.split("/").some((segment) => segment === "..")) return `${label} must not contain parent-directory traversal.`;
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === "..")) return `${label} must not contain parent-directory traversal.`;
+  if (platform === "win32" && segments.some(isWindowsUnsafePathSegment)) {
+    return `${label} contains a file name that Windows cannot store safely.`;
+  }
   return undefined;
+}
+
+export function isWindowsUnsafePathSegment(segment: string): boolean {
+  const stem = segment.split(".", 1)[0].toUpperCase();
+  return /[<>:"|?*\u0000-\u001f]/u.test(segment) || /[ .]$/u.test(segment) ||
+    /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/u.test(stem);
 }
 
 export function resolveProjectPath(root: string, projectPath: string): string {

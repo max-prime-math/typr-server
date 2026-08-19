@@ -4,8 +4,9 @@ title: Release Typr Companion
 
 # Release Typr Companion
 
-This is the maintainer policy for `ghcr.io/max-prime-math/typr-server` and its
-optional Docker Hub mirror. Companion and Typr frontend releases have independent
+This is the maintainer policy for `ghcr.io/max-prime-math/typr-server`, its
+optional Docker Hub mirror, and the signed portable Windows executable.
+Companion and Typr frontend releases have independent
 repositories, tag namespaces, versions, workflows, packages, and templates.
 
 ## Independent versions
@@ -55,9 +56,19 @@ and exact image tags are immutable. If a run fails after an exact tag exists,
 inspect it and rerun only when it resolves to the same candidate digest; never
 rebuild over that version.
 
+The separate Windows workflow builds on `windows-2025` with Node's native SEA
+builder, embeds the SHA-256-pinned TinyTeX runtime and MuPDF WebAssembly, runs
+the Windows unit suite, and exercises first-run offline extraction, REST
+compilation, the workspace API, and the live-preview fallback. A tagged build
+must have an annotated tag matching `companion-release.json` and must be
+Authenticode-signed; missing signing secrets fail publication. The verified
+`typr-companion-windows-x64.exe` is attached to the exact GitHub Release without
+overwriting an existing asset. Pull-request artifacts remain unsigned test
+artifacts.
+
 ## Stable tags
 
-Tag `v0.1.4` publishes:
+Tag `v0.1.4` publishes the Windows executable plus:
 
 ```text
 ghcr.io/max-prime-math/typr-server:0.1.4

@@ -1,6 +1,9 @@
 import { createTyprServer, shutdownTyprServer } from "./server.ts";
 import { WorkspaceStore } from "./workspaceStore.ts";
 import { parseUnsandboxedStatelessOptIn, resolveNativeSandbox } from "./sandboxPolicy.ts";
+import { prepareWindowsPortableRuntime } from "./windowsPortable.ts";
+
+await prepareWindowsPortableRuntime();
 
 const port = parsePort(process.env.TYPR_COMPANION_PORT, 8484);
 const host = process.env.TYPR_COMPANION_HOST ?? "127.0.0.1";

@@ -10,6 +10,7 @@ export interface NativeSandboxPolicyOptions {
   accessExecutable?: (path: string, mode: number) => Promise<void>;
   probeSandbox?: (path: string) => Promise<void>;
   assertVolumeFree?: () => Promise<void>;
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -22,6 +23,15 @@ export interface NativeSandboxPolicyOptions {
 export async function resolveNativeSandbox(options: NativeSandboxPolicyOptions): Promise<string | undefined> {
   const sandboxExecutable = options.sandboxExecutable?.trim() || undefined;
   const workspaceRoot = options.workspaceRoot?.trim() || undefined;
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32" && !sandboxExecutable) {
+    options.onFallback?.(
+      `WARNING: Windows portable mode uses TeX's paranoid file-open policy, disabled shell escape, ` +
+      `per-job temporary directories, and process-tree deadlines. Windows does not provide the ` +
+      `Companion Landlock launcher; use only documents trusted by this Windows account.`
+    );
+    return undefined;
+  }
   if (!sandboxExecutable) {
     if (workspaceRoot) {
       throw new Error("A mapped workspace requires TYPR_COMPANION_SANDBOX_EXECUTABLE; refusing to expose it beside unsandboxed native compilers.");
