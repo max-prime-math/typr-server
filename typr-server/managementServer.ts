@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AccessStore, AccessStoreError } from "./accessStore.ts";
 import { ActivityBus, type ActivityEvent } from "./activity.ts";
@@ -26,6 +27,8 @@ export interface ManagementServerOptions {
   activity: ActivityBus;
   servicePort: number;
   getServices: (forceRefresh?: boolean) => Promise<ManagedServiceDescriptor[]>;
+  allowRemote?: boolean;
+  administratorPassword?: string;
 }
 
 interface ManagementContext {
@@ -36,13 +39,21 @@ const contexts = new WeakMap<Server, ManagementContext>();
 const MAX_MANAGEMENT_BODY_BYTES = 64 * 1024;
 const MANAGEMENT_HEADER = "x-typr-management";
 
-/** Creates the loopback management GUI/API server. It must never be bound to a LAN address. */
+/** Creates the management GUI/API server. Remote mode requires HTTP Basic authentication. */
 export function createManagementServer(options: ManagementServerOptions): Server {
+  if (options.allowRemote && !validAdministratorPassword(options.administratorPassword)) {
+    throw new Error("Remote management requires a TYPR_COMPANION_MANAGEMENT_PASSWORD of at least 24 characters.");
+  }
   const context: ManagementContext = { clients: new Set() };
   const server = createServer(async (request, response) => {
     applySecurityHeaders(response);
-    if (!hasLoopbackHost(request)) {
+    if (!options.allowRemote && !hasLoopbackHost(request)) {
       sendJson(response, 421, { error: { code: "loopback-host-required", message: "Management accepts loopback Host headers only." } });
+      return;
+    }
+    if (options.administratorPassword && !hasAdministratorAuthorization(request, options.administratorPassword)) {
+      response.setHeader("WWW-Authenticate", 'Basic realm="Typr Companion Management", charset="UTF-8"');
+      sendJson(response, 401, { error: { code: "management-authentication-required", message: "Management administrator authentication is required." } });
       return;
     }
     try {
@@ -230,6 +241,26 @@ function hasLoopbackHost(request: IncomingMessage): boolean {
   } catch {
     return false;
   }
+}
+
+function hasAdministratorAuthorization(request: IncomingMessage, password: string): boolean {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string" || !authorization.startsWith("Basic ")) return false;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+  } catch {
+    return false;
+  }
+  const separator = decoded.indexOf(":");
+  if (separator < 0 || decoded.slice(0, separator) !== "typr") return false;
+  const supplied = Buffer.from(decoded.slice(separator + 1), "utf8");
+  const expected = Buffer.from(password, "utf8");
+  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
+}
+
+function validAdministratorPassword(password: string | undefined): password is string {
+  return Boolean(password && password.length >= 24);
 }
 
 function applySecurityHeaders(response: ServerResponse): void {

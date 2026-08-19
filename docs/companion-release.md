@@ -69,10 +69,10 @@ artifacts.
 
 ## Stable tags
 
-Tag `v0.1.4` publishes the Windows executable plus:
+Tag `v0.1.5` publishes the Windows executable plus:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.4
+ghcr.io/max-prime-math/typr-server:0.1.5
 ghcr.io/max-prime-math/typr-server:0.1
 ghcr.io/max-prime-math/typr-server:0
 ghcr.io/max-prime-math/typr-server:latest
@@ -100,14 +100,14 @@ the GitHub `container-release` environment with required reviewers and restrict
 it to protected `v*` tags. Package linkage, Actions access, visibility, and the
 release environment are distinct settings.
 
-## Create `v0.1.4`
+## Create `v0.1.5`
 
 Only after the complete local and GitHub validation matrix is green, from a
 clean exact `main` checkout:
 
 ```bash
-git tag -a v0.1.4 -m "Typr Companion v0.1.4"
-git push origin v0.1.4
+git tag -a v0.1.5 -m "Typr Companion v0.1.5"
+git push origin v0.1.5
 ```
 
 Pushing the tag intentionally starts publication. If a prepublication step

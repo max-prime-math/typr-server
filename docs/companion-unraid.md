@@ -9,11 +9,13 @@ Typr Companion can run on Unraid from the official
 dedicated host directory can optionally be mapped for explicit manual project
 sync; browser-local Typr remains authoritative.
 
-The service has no authentication. Use it only on a trusted LAN or private VPN,
-with mutually trusted users and documents. **Never expose it to the public
-Internet**, through router port forwarding, a public tunnel, or a public reverse
-proxy. TLS improves transport and browser compatibility; it does not add
-application authentication.
+The service API starts without required API keys so old Typr clients remain
+compatible. Its separate management GUI requires an administrator password. Use
+both only on a trusted LAN or private VPN, with mutually trusted users and
+documents. **Never expose either port to the public Internet**, through router
+port forwarding, a public tunnel, or a public reverse proxy. TLS improves
+transport and browser compatibility; service API keys and the GUI password do
+not make native TeX safe for hostile multi-tenant use.
 
 Stock Unraid kernels may not provide Landlock. This template therefore opts into
 a narrowly limited fallback: Companion may run without its native filesystem
@@ -36,14 +38,16 @@ template:
    ```
 
 3. Open **Docker → Add Container** and select **Typr-Companion**.
-4. Keep bridge networking and container port `8484`.
-5. Add the exact self-hosted Typr origin to **Allowed Typr origins** if needed.
-6. Leave **Workspace directory** and **Workspace API root** blank for the
+4. Keep bridge networking and container ports `8484` and `8485`.
+5. Set **Management password** to a unique value of at least 24 characters.
+   The browser username is `typr`.
+6. Add the exact self-hosted Typr origin to **Allowed Typr origins** if needed.
+7. Leave **Workspace directory** and **Workspace API root** blank for the
    default stateless deployment. The prefilled Workspace ID is ignored while
    the root is blank.
-7. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
+8. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
    This does not permit a mapped workspace without Landlock.
-8. Apply the template and wait for a healthy container.
+9. Apply the template and wait for a healthy container.
 
 The template enforces UID 1000, non-privileged operation, dropped capabilities,
 no-new-privileges, a read-only root, 512 MiB no-exec tmpfs, 256 PIDs, 2 GiB
@@ -51,6 +55,12 @@ memory/swap, and two CPUs. The image probes its Landlock launcher before
 listening. When that probe fails, the explicit template opt-in permits only the
 volume-free stateless fallback and logs a prominent trusted-document warning.
 Without that opt-in, or whenever a workspace is mapped, startup fails closed.
+
+Open the container's **WebUI** to reach port `8485`, then sign in as `typr` with
+the management password. The GUI shows advertised services and live activity
+and manages service users/API keys. On the stock volume-free fallback this state
+is intentionally session-only and resets whenever the container restarts. API
+key enforcement starts disabled, preserving compatibility with old Typr clients.
 
 ## Optional mapped workspace
 
@@ -87,7 +97,7 @@ curl -fsS http://127.0.0.1:8484/api/v1/status
 
 The response reports protocol version 1, native compile capabilities, and
 `projectStorage: false` unless all mapped-workspace fields are valid. The WebUI
-link opens the same status response. In fallback mode, the container log states
+link opens the authenticated management GUI. In fallback mode, the container log states
 that the native filesystem sandbox is unavailable and that trusted documents are
 required. Startup failures are visible in the same log.
 
@@ -112,7 +122,10 @@ location / {
 }
 ```
 
-Keep the hostname unreachable from the public Internet. Plain HTTP on a
+Use a separate proxy hostname or port for the management GUI and forward it to
+`http://UNRAID-IP:8485`; do not route management and service traffic through the
+same unpartitioned upstream. Keep both hostnames unreachable from the public
+Internet. Plain HTTP on a
 non-loopback LAN address is not a secure context and a self-hosted Typr page will
 lose service-worker/PWA and filesystem-related features. A self-signed
 certificate must be trusted by every client before it is useful.
@@ -135,7 +148,9 @@ tailscale serve status
 ```
 
 Enter the resulting base URL, such as
-`https://UNRAID-NAME.TAILNET.ts.net:8443`, in Typr. Serve terminates trusted TLS
+`https://UNRAID-NAME.TAILNET.ts.net:8443`, in Typr. A separate management
+endpoint may be created with
+`tailscale serve --bg --https=8444 http://127.0.0.1:8485`. Serve terminates trusted TLS
 and proxies both the HTTP API and WebSocket upgrade within the tailnet. The
 browser device must be connected to that tailnet and allowed by its access
 rules. Keep Tailscale **Funnel disabled**: Funnel would make this unauthenticated
@@ -165,14 +180,15 @@ native TeX behavior, change Repository to a complete version after it is
 published, for example:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.4
+ghcr.io/max-prime-math/typr-server:0.1.5
 ```
 
 Rollback uses the same field with the prior known-good version. Removing the
 container removes no browser-local projects and no mapped host directory.
 
 The template remains a direct user template until both public image tags exist,
-it passes install/update/rollback/removal and HTTPS/WebSocket tests on a real
+it passes install/update/rollback/removal, HTTPS/WebSocket tests, and the
+authenticated management path on a real
 Unraid host, a maintained Unraid forum support topic exists, and the maintainer
 puts that identical URL in the template's `Support` and profile's `Forum`
 fields. Then run `npm run test:unraid -- --submission-ready` and the portal's

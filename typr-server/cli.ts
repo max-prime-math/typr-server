@@ -15,6 +15,12 @@ const port = parsePort(process.env.TYPR_COMPANION_PORT, 8484);
 const managementPort = parsePort(process.env.TYPR_COMPANION_MANAGEMENT_PORT, 8485);
 if (managementPort === port) throw new Error("The Companion service and management GUI must use different ports.");
 const host = process.env.TYPR_COMPANION_HOST ?? "127.0.0.1";
+const managementHost = process.env.TYPR_COMPANION_MANAGEMENT_HOST?.trim() || "127.0.0.1";
+const administratorPassword = process.env.TYPR_COMPANION_MANAGEMENT_PASSWORD?.trim() || undefined;
+const remoteManagement = !isLoopbackHost(managementHost);
+if (remoteManagement && (!administratorPassword || administratorPassword.length < 24)) {
+  throw new Error("Remote management requires TYPR_COMPANION_MANAGEMENT_PASSWORD with at least 24 characters.");
+}
 const configuredVersion = process.env.TYPR_COMPANION_VERSION?.trim();
 const workspaceRoot = process.env.TYPR_COMPANION_WORKSPACE_ROOT?.trim();
 const sandboxExecutable = await resolveNativeSandbox({
@@ -47,18 +53,20 @@ const managementServer = createManagementServer({
   access,
   activity,
   servicePort: port,
-  getServices: async (forceRefresh) => [managementDescriptor(), ...await services.snapshot(forceRefresh)]
+  getServices: async (forceRefresh) => [managementDescriptor(), ...await services.snapshot(forceRefresh)],
+  allowRemote: remoteManagement,
+  ...(administratorPassword ? { administratorPassword } : {})
 });
 
 await listen(server, port, host);
 try {
-  await listen(managementServer, managementPort, "127.0.0.1");
+  await listen(managementServer, managementPort, managementHost);
 } catch (error) {
   await shutdownTyprServer(server);
   throw error;
 }
 console.log(`typr-server listening on http://${host}:${port}`);
-console.log(`Typr Companion management GUI: http://127.0.0.1:${managementPort}`);
+console.log(`Typr Companion management GUI: http://${managementHost}:${managementPort}`);
 activity.publish({
   serviceId: "management",
   level: "info",
@@ -117,4 +125,9 @@ function parsePort(value: string | undefined, fallback: number): number {
     throw new Error("TYPR_COMPANION_PORT must be a valid TCP port number.");
   }
   return parsed;
+}
+
+function isLoopbackHost(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }

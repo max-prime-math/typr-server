@@ -7,7 +7,7 @@ Typr Companion is the self-hosted compile and live-preview service for Typr. It 
 ## Image
 
 ```sh
-maxprimemath/typr-server:0.1.4
+maxprimemath/typr-server:0.1.5
 ```
 
 The image supports `linux/amd64` and `linux/arm64`. Use an exact version or digest for reproducible deployments; `latest` is a moving alias.
@@ -20,7 +20,7 @@ docker run --detach --name typr-companion \
   --read-only --cap-drop=ALL \
   --security-opt=no-new-privileges:true \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=536870912 \
-  maxprimemath/typr-server:0.1.4
+  maxprimemath/typr-server:0.1.5
 ```
 
 Configure Typr with the browser-reachable Companion URL and an exact allowed origin. CORS is not authentication; the service is designed for mutually trusted users and documents.

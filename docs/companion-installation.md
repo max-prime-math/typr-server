@@ -62,6 +62,7 @@ native TeX a hostile multi-tenant boundary.
 
 Configuration remains available through `TYPR_COMPANION_PORT`,
 `TYPR_COMPANION_MANAGEMENT_PORT`,
+`TYPR_COMPANION_MANAGEMENT_HOST`, `TYPR_COMPANION_MANAGEMENT_PASSWORD`,
 `TYPR_COMPANION_HOST`, `TYPR_COMPANION_ALLOWED_ORIGINS`,
 `TYPR_COMPANION_WORKSPACE_ROOT`, and `TYPR_COMPANION_WORKSPACE_ID`. Keep the
 default loopback host on a locked-down machine. Setting a workspace root before
@@ -224,13 +225,13 @@ for the original installation when recreating a direct-Docker container.
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.4
+ghcr.io/max-prime-math/typr-server:0.1.5
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.4
+image: ghcr.io/max-prime-math/typr-server:0.1.5
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.
@@ -260,7 +261,8 @@ There is no Companion cache volume to remove and uninstalling the container does
 - Never use router port forwarding, a public tunnel, or a publicly reachable
   reverse-proxy route for Companion. TLS does not add application authentication.
 - The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox by default, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits. The explicit stateless-only Unraid fallback is weaker, must remain volume-free, and is for trusted documents only.
-- API-key authentication can be enabled from the loopback management GUI. It
+- API-key authentication can be enabled from the local or separately
+  administrator-authenticated management GUI. It
   authenticates Companion clients but does not replace network controls or make
   native parsers safe for mutually untrusted users.
 - Native TeX/MuPDF/TeXpresso parsers are not a complete hostile-code boundary. All people able to submit documents or use the mapped workspace must be mutually trusted.

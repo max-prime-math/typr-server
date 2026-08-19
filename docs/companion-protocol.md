@@ -42,7 +42,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 ```json
 {
   "protocolVersion": 1,
-  "serverVersion": "0.1.4-dev",
+  "serverVersion": "0.1.5-dev",
   "capabilities": {
     "compile": { "engines": ["pdflatex"] },
     "filesystem": { "projectStorage": false },
@@ -57,8 +57,10 @@ If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` comp
 
 By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
 
-The separate management GUI on loopback port `8485` can enable optional API-key
-authentication. HTTP clients send `Authorization: Bearer typr_...`. Browser
+The separate management GUI on port `8485` can enable optional API-key
+authentication. It stays on loopback by default; explicit remote-container mode
+requires a separate administrator password. HTTP service clients send
+`Authorization: Bearer typr_...`. Browser
 WebSocket clients cannot set that header, so authenticated live-preview clients
 request the subprotocols `typr-companion-v1` and
 `typr-api-key.<base64url-encoded-key>`; the server selects only
@@ -120,7 +122,9 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_VERSION` | injected by the image build | Packaged server version reported by `/api/v1/status`; independent of protocol version. |
 | `TYPR_COMPANION_HOST` | `0.0.0.0` | Container listen interface. Native development retains its `127.0.0.1` default. |
 | `TYPR_COMPANION_PORT` | `8484` | Companion TCP port. |
-| `TYPR_COMPANION_MANAGEMENT_PORT` | `8485` | Separate loopback management GUI port. It must differ from the service port. |
+| `TYPR_COMPANION_MANAGEMENT_PORT` | `8485` | Separate management GUI port. It must differ from the service port. |
+| `TYPR_COMPANION_MANAGEMENT_HOST` | `127.0.0.1` | Management listen interface. Non-loopback values require a strong management password. |
+| `TYPR_COMPANION_MANAGEMENT_PASSWORD` | unset | Administrator password for explicit remote management; at least 24 characters. Browser username: `typr`. |
 | `TYPR_COMPANION_MANAGEMENT_STATE` | unset | Optional writable management-state JSON path for native non-Windows runs. Portable Windows uses its per-user application-data directory automatically. |
 | `TYPR_COMPANION_ALLOWED_ORIGINS` | official Typr and local Vite origins | Optional comma-separated exact-origin override, shared with the native server. |
 | `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
@@ -150,7 +154,7 @@ The selected Node base image and Debian packages have `linux/amd64` and `linux/a
 
 Node, TeX Live, `latexmk`, and their system dependencies are Companion **container toolchain** components: they are versioned by the Dockerfile and supplied by the image. Future document-specific package caches, fonts, and persistent caches are separate project-dependency concerns. No package-management or persistence API is provided here, so adding such a capability later does not need to depend on a host package manager such as apt, Homebrew, winget, or pacman.
 
-The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. The explicit stateless fallback has no Landlock confinement and is therefore weaker even though it remains non-root, volume-free, read-only, capability-free, and resource-limited. Operate only on a trusted LAN/VPN, never expose the port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Authentication and package-installation APIs are deliberately not implemented. The private experimental WebSocket does not change this security model.
+The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. The explicit stateless fallback has no Landlock confinement and is therefore weaker even though it remains non-root, volume-free, read-only, capability-free, and resource-limited. Operate only on a trusted LAN/VPN, never expose either port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Optional service API keys authenticate callers but do not create a hostile multi-tenant boundary. The private experimental WebSocket does not change this security model.
 
 Future images may add optional capabilities such as Typst, LSP servers, or Git tooling. TeXpresso is present only as the internal experiment documented below; it is not part of the public Companion protocol or capability advertisement.
 

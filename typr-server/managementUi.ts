@@ -82,7 +82,7 @@ export const MANAGEMENT_UI_HTML = String.raw`<!doctype html>
         <div class="sidebody">
           <div class="setting">
             <label>Require API keys <input type="checkbox" id="requireKeys"></label>
-            <p>When enabled, service HTTP and WebSocket requests must authenticate. The management console remains local to this OS account.</p>
+            <p>When enabled, service HTTP and WebSocket requests must authenticate. Remote container management has a separate administrator sign-in.</p>
           </div>
           <div class="sectiontitle"><h2>Users and keys</h2><button class="primary" id="addUser">Add user</button></div>
           <div id="users"></div>

@@ -42,8 +42,11 @@ assert.equal(one(template, "TemplateURL").text, "https://raw.githubusercontent.c
 assert.match(one(template, "Overview").text, /Stateless by default/i);
 assert.match(one(template, "Description").text, /never be exposed.+public Internet/i);
 assert.match(one(template, "Description").text, /stateless fallback/i);
+assert.match(one(template, "Description").text, /management GUI/i);
 assert.match(one(template, "Requires").text, /Never expose.+public Internet/i);
 assert.match(one(template, "Requires").text, /Landlock/i);
+assert.match(one(template, "Requires").text, /at least 24 characters/i);
+assert.equal(one(template, "WebUI").text, "http://[IP]:[PORT:8485]/");
 
 const requiredExtraParams = new Set([
   "--restart=unless-stopped",
@@ -61,10 +64,16 @@ const actualExtraParams = new Set(one(template, "ExtraParams").text.trim().split
 assert.deepEqual(actualExtraParams, requiredExtraParams);
 
 const configs = template.children.filter((child) => child.tag === "Config");
-assert.equal(configs.length, 6);
+assert.equal(configs.length, 9);
 const byTarget = new Map(configs.map((config) => [config.attributes.Target, config]));
 assert.equal(byTarget.get("8484")?.attributes.Mode, "tcp");
 assert.equal(byTarget.get("8484")?.text, "8484");
+assert.equal(byTarget.get("8485")?.attributes.Mode, "tcp");
+assert.equal(byTarget.get("8485")?.text, "8485");
+assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_HOST")?.text, "0.0.0.0");
+assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.attributes.Required, "true");
+assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.attributes.Mask, "true");
+assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.text, "");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOWED_ORIGINS")?.attributes.Description || "", /CORS is not authentication/i);
 assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.text, "1");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.attributes.Description || "", /no host workspace is mounted/i);

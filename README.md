@@ -5,8 +5,9 @@ for [Typr](https://github.com/max-prime-math/typr). The public container remains
 `ghcr.io/max-prime-math/typr-server`.
 
 The service starts in backward-compatible trusted-local mode. Its separate
-loopback management console can create users and API keys and then require those
-keys for service requests. Run it only on a trusted machine, LAN, or VPN; never
+management console can create users and API keys and then require those keys for
+service requests. Native installs keep it on loopback; the Unraid template uses
+a separate administrator password before exposing its GUI port. Run it only on a trusted machine, LAN, or VPN; never
 expose it to the public Internet. Browser access from another
 device normally requires an HTTPS reverse proxy with WebSocket support because
 an HTTPS Typr page cannot call a plain HTTP/WS Companion.

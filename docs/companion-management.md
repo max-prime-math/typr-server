@@ -7,12 +7,16 @@ title: Manage Typr Companion
 Companion uses two independent HTTP listeners:
 
 - `127.0.0.1:8484` is the document service API used by Typr.
-- `127.0.0.1:8485` is the local management GUI and management API.
+- `127.0.0.1:8485` is the default local management GUI and management API.
 
 Change the ports with `TYPR_COMPANION_PORT` and
-`TYPR_COMPANION_MANAGEMENT_PORT`. They must be different. The management host is
-fixed to IPv4 loopback; it is not affected by `TYPR_COMPANION_HOST` and is not a
-LAN administration surface.
+`TYPR_COMPANION_MANAGEMENT_PORT`. They must be different. Native and Windows
+installs keep management on loopback by default. A container may explicitly set
+`TYPR_COMPANION_MANAGEMENT_HOST=0.0.0.0`; any non-loopback value refuses startup
+unless `TYPR_COMPANION_MANAGEMENT_PASSWORD` contains at least 24 characters.
+The browser then uses HTTP Basic authentication with username `typr` and that
+administrator password. Keep the GUI restricted to a trusted LAN/VPN and put it
+behind client-trusted HTTPS when that network is not physically trusted.
 
 ## Services and providers
 
@@ -62,8 +66,8 @@ typr-api-key.<base64url-encoded-complete-api-key>
 ```
 
 Disabling a user disables all their keys immediately. Revocation is permanent.
-The management GUI remains available so the local OS user can recover from a
-lost or revoked last key.
+The management GUI remains available so its local OS user or authenticated
+container administrator can recover from a lost or revoked last service key.
 
 On portable Windows, state persists with current-user permissions at:
 
@@ -72,9 +76,14 @@ On portable Windows, state persists with current-user permissions at:
 ```
 
 Native non-Windows development runs keep management state in memory unless
-`TYPR_COMPANION_MANAGEMENT_STATE` names a writable JSON file. Container users
-should not expose the management port; the current production container remains
-stateless and publishes only the service port.
+`TYPR_COMPANION_MANAGEMENT_STATE` names a writable JSON file. The Unraid
+template exposes the separately authenticated GUI but deliberately remains
+volume-free on its stock-kernel fallback. Its users, service API keys, and
+enforcement setting are therefore session-only and reset when the container
+restarts. Do not enable service-key enforcement there unless every Typr client
+can be updated again after a restart. A persistent management-state mount may be
+used only where the native Landlock sandbox is working; the volume-free fallback
+rejects it.
 
 ## Live activity and logs
 
@@ -91,13 +100,15 @@ Activity history is deliberately process-local: it clears on restart and does
 not create an unbounded log database. The GUI reconnects automatically if the
 event stream is interrupted.
 
-## Local security boundary
+## Management security boundary
 
-The management server validates loopback Host headers, sends no CORS permission,
-requires `X-Typr-Management: 1` for every mutation, denies framing, and applies a
-restrictive content-security policy. These controls prevent an ordinary remote
-web page from managing Companion through the browser. They do not defend against
-malware already running as the same OS user.
+In local mode the management server validates loopback Host headers. In explicit
+remote-container mode it authenticates every page, API request, and event stream
+with the administrator password. Both modes send no CORS permission, require
+`X-Typr-Management: 1` for every mutation, deny framing, and apply a restrictive
+content-security policy. These controls prevent an ordinary remote web page from
+managing Companion through the browser. They do not defend against malware
+already running as the same OS user or against an administrator-password leak.
 
 API keys authenticate service callers; they do not make native TeX, MuPDF, or
 language-server processes safe for hostile multi-tenant use. Keep both ports off

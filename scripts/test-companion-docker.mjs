@@ -348,6 +348,7 @@ async function assertBrokenSandboxFailsClosed(imageName) {
 }
 
 async function assertExplicitStatelessFallback(imageName) {
+  const managementPassword = "docker-management-test-password";
   const id = (await capture("docker", [
     "create",
     "--cap-drop", "ALL",
@@ -358,14 +359,19 @@ async function assertExplicitStatelessFallback(imageName) {
     "--memory", "2g",
     "--cpus", "2",
     "--publish", "127.0.0.1::8484",
+    "--publish", "127.0.0.1::8485",
     "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
     "--env", "TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1",
+    "--env", "TYPR_COMPANION_MANAGEMENT_HOST=0.0.0.0",
+    "--env", `TYPR_COMPANION_MANAGEMENT_PASSWORD=${managementPassword}`,
     imageName
   ])).trim();
   try {
     await run("docker", ["start", id]);
     const portOutput = await capture("docker", ["port", id, "8484/tcp"]);
     const baseUrl = `http://127.0.0.1:${parsePublishedPort(portOutput)}`;
+    const managementPortOutput = await capture("docker", ["port", id, "8485/tcp"]);
+    const managementUrl = `http://127.0.0.1:${parsePublishedPort(managementPortOutput)}`;
     const status = await waitForStatus(baseUrl);
     assert(status.capabilities?.filesystem?.projectStorage === false,
       "The explicit stateless fallback must not advertise mapped workspace storage.");
@@ -373,6 +379,16 @@ async function assertExplicitStatelessFallback(imageName) {
       textFile("main.tex", "\\documentclass{article}\n\\begin{document}\nTrusted stateless fallback.\n\\end{document}\n")
     ]);
     assertPdf(result, "an explicit volume-free stateless fallback compile");
+    const unauthorizedManagement = await fetch(`${managementUrl}/api/snapshot`);
+    assert(unauthorizedManagement.status === 401,
+      "Remote container management must reject requests without its administrator password.");
+    const authorizedManagement = await fetch(`${managementUrl}/api/snapshot`, {
+      headers: { Authorization: `Basic ${Buffer.from(`typr:${managementPassword}`).toString("base64")}` }
+    });
+    assert(authorizedManagement.ok, "Remote container management must accept the configured administrator password.");
+    const managementSnapshot = await authorizedManagement.json();
+    assert(managementSnapshot.managementPort === 8485,
+      "The authenticated management snapshot must report the internal GUI port.");
     const logs = await captureCombined("docker", ["logs", id]);
     assert(logs.includes("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1"),
       "The stateless fallback must log its explicit opt-in.");

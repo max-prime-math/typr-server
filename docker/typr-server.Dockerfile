@@ -5,7 +5,7 @@
 ARG NODE_IMAGE=node:22.23.2-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
 ARG TEXPRESSO_REV=e8df7709077b2f86f6e16e6c86ceefb86de06f8d
 ARG WS_VERSION=8.21.3
-ARG COMPANION_VERSION=0.1.3-dev
+ARG COMPANION_VERSION=0.1.5-dev
 ARG IMAGE_SOURCE=https://github.com/max-prime-math/typr-server
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
@@ -132,7 +132,7 @@ ENV NODE_ENV=production \
 
 USER node
 
-EXPOSE 8484
+EXPOSE 8484 8485
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8484/api/v1/status').then((response) => process.exit(response.ok || response.status === 401 ? 0 : 1)).catch(() => process.exit(1))"]
