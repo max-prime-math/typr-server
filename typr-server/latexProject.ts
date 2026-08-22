@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { nativeTool, nativeToolAvailable } from "./nativeTools.ts";
 import { runNativeProcess, type NativeProcessResult } from "./nativeProcess.ts";
 
@@ -7,10 +8,11 @@ export async function runLatexProject(
   mainFilePath: string,
   signal: AbortSignal
 ): Promise<NativeProcessResult> {
+  const outputDirectory = latexOutputDirectoryArgument(mainFilePath);
   if (await nativeToolAvailable("latexmk")) {
     return runNativeProcess(
       nativeTool("latexmk"),
-      ["-norc", "-pdf", "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
+      ["-norc", "-pdf", "-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", outputDirectory, mainFilePath],
       workspace,
       signal
     );
@@ -20,7 +22,7 @@ export async function runLatexProject(
   for (let pass = 1; pass <= 3; pass += 1) {
     result = await runNativeProcess(
       nativeTool("pdflatex"),
-      ["-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", mainFilePath],
+      ["-no-shell-escape", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", outputDirectory, mainFilePath],
       workspace,
       signal
     );
@@ -28,4 +30,8 @@ export async function runLatexProject(
     if (result.exitCode !== 0) break;
   }
   return result;
+}
+
+export function latexOutputDirectoryArgument(mainFilePath: string): string {
+  return `-output-directory=${dirname(mainFilePath)}`;
 }
