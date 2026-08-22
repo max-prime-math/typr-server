@@ -77,6 +77,7 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         biber \
         ca-certificates \
+        cm-super \
         latexmk \
         libfontconfig1 \
         libfreetype6 \
