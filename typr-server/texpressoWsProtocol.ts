@@ -10,6 +10,7 @@ import {
   type TexpressoInitializeMessage,
   type TexpressoPageDescriptor,
   type TexpressoRange,
+  type TexpressoRenderTheme,
   type TexpressoServerMessage,
   type TexpressoShutdownMessage
 } from "../src/companion-protocol/texpresso.ts";
@@ -24,6 +25,7 @@ export type {
   TexpressoDiagnostic,
   TexpressoInitializeMessage,
   TexpressoPageDescriptor,
+  TexpressoRenderTheme,
   TexpressoServerMessage,
   TexpressoShutdownMessage
 };
@@ -102,11 +104,29 @@ function validateInitialize(value: Record<string, unknown>): ClientMessageValida
     return invalid("invalid-project", "mainFilePath must identify a supplied text file.", value.revision as number);
   }
   let dpi: number = TEXPRESSO_WS_LIMITS.defaultDpi;
+  let theme: TexpressoRenderTheme | undefined;
   if (value.render !== undefined) {
     if (!isRecord(value.render) || (value.render.dpi !== undefined && !Number.isInteger(value.render.dpi))) {
       return invalid("invalid-render-settings", "render.dpi must be an integer.", value.revision as number);
     }
     dpi = (value.render.dpi as number | undefined) ?? dpi;
+    if (value.render.theme !== undefined) {
+      if (
+        !isRecord(value.render.theme) ||
+        !validRgbColor(value.render.theme.foreground) ||
+        !validRgbColor(value.render.theme.background)
+      ) {
+        return invalid(
+          "invalid-render-settings",
+          "render.theme foreground and background must be RGB integers between 0x000000 and 0xffffff.",
+          value.revision as number
+        );
+      }
+      theme = {
+        foreground: value.render.theme.foreground,
+        background: value.render.theme.background
+      };
+    }
   }
   if (dpi < TEXPRESSO_WS_LIMITS.minDpi || dpi > TEXPRESSO_WS_LIMITS.maxDpi) {
     return invalid(
@@ -123,10 +143,14 @@ function validateInitialize(value: Record<string, unknown>): ClientMessageValida
       protocolVersion: TEXPRESSO_WS_PROTOCOL_VERSION,
       revision: value.revision as number,
       mainFilePath,
-      render: { dpi },
+      render: { dpi, ...(theme ? { theme } : {}) },
       files
     }
   };
+}
+
+function validRgbColor(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 0xffffff;
 }
 
 function validateChange(value: Record<string, unknown>): ClientMessageValidation {

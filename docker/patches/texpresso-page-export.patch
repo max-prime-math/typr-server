@@ -8,17 +8,35 @@ index 6face98..e5b0088 100644
    }
 +  else if (strcmp(verb, "render-page") == 0)
 +  {
-+    if (len != 3)
++    if (len != 3 && len != 5)
 +      goto arity;
 +    val page = val_array_get(ctx, stack, command, 1);
 +    val dpi = val_array_get(ctx, stack, command, 2);
 +    if (!val_is_number(page) || !val_is_number(dpi))
 +      goto arguments;
++    int tint = len == 5;
++    int foreground = 0;
++    int background = 0;
++    if (tint)
++    {
++      val foreground_value = val_array_get(ctx, stack, command, 3);
++      val background_value = val_array_get(ctx, stack, command, 4);
++      if (!val_is_number(foreground_value) || !val_is_number(background_value))
++        goto arguments;
++      foreground = val_number(ctx, foreground_value);
++      background = val_number(ctx, background_value);
++      if (foreground < 0 || foreground > 0xffffff ||
++          background < 0 || background > 0xffffff)
++        goto arguments;
++    }
 +    *out = (struct editor_command){
 +        .tag = EDIT_RENDER_PAGE,
 +        .render_page = {
 +            .page = val_number(ctx, page),
 +            .dpi = val_number(ctx, dpi),
++            .tint = tint,
++            .foreground = foreground,
++            .background = background,
 +        },
 +    };
 +  }
@@ -110,6 +128,9 @@ index 05fdd1c..e5b84df 100644
 +    struct {
 +      int page;
 +      int dpi;
++      int tint;
++      int foreground;
++      int background;
 +    } render_page;
 +
 +    struct {
@@ -138,6 +159,9 @@ index c202294..7f7b061 100644
    int page;
 +  int pending_render_page;
 +  int pending_render_dpi;
++  int pending_render_tint;
++  int pending_render_foreground;
++  int pending_render_background;
    int need_synctex;
    int zoom;
  
@@ -152,7 +176,8 @@ index c202294..7f7b061 100644
 + * extension for Typr's local render POC, not a stable upstream protocol.
 + */
 +static void export_page_png(struct persistent_state *ps, ui_state *ui,
-+                            int page, int dpi)
++                            int page, int dpi, int tint,
++                            int foreground, int background)
 +{
 +  if (page < 0 || page >= send(page_count, ui->eng))
 +  {
@@ -189,6 +214,8 @@ index c202294..7f7b061 100644
 +    fz_close_device(ps->ctx, device);
 +    fz_drop_device(ps->ctx, device);
 +    device = NULL;
++    if (tint)
++      fz_tint_pixmap(ps->ctx, pixmap, foreground, background);
 +
 +    png = fz_new_buffer(ps->ctx, 0);
 +    output = fz_new_output_with_buffer(ps->ctx, png);
@@ -217,7 +244,8 @@ index c202294..7f7b061 100644
 +}
 +
 +static void request_page_export(struct persistent_state *ps, ui_state *ui,
-+                                int page, int dpi)
++                                int page, int dpi, int tint,
++                                int foreground, int background)
 +{
 +  if (page < 0 || dpi < 36 || dpi > 300)
 +  {
@@ -226,13 +254,16 @@ index c202294..7f7b061 100644
 +  }
 +  if (page < send(page_count, ui->eng))
 +  {
-+    export_page_png(ps, ui, page, dpi);
++    export_page_png(ps, ui, page, dpi, tint, foreground, background);
 +    return;
 +  }
 +  /* TeXpresso incrementally discovers pages only as the viewer reaches them. */
 +  ui->page = page;
 +  ui->pending_render_page = page;
 +  ui->pending_render_dpi = dpi;
++  ui->pending_render_tint = tint;
++  ui->pending_render_foreground = foreground;
++  ui->pending_render_background = background;
 +  schedule_event(RELOAD_EVENT);
 +}
  
@@ -244,7 +275,9 @@ index c202294..7f7b061 100644
        break;
 +
 +    case EDIT_RENDER_PAGE:
-+      request_page_export(ps, ui, cmd.render_page.page, cmd.render_page.dpi);
++      request_page_export(ps, ui, cmd.render_page.page, cmd.render_page.dpi,
++                          cmd.render_page.tint, cmd.render_page.foreground,
++                          cmd.render_page.background);
 +      break;
 +
 +    case EDIT_PAGE_COUNT:
@@ -258,6 +291,9 @@ index c202294..7f7b061 100644
      ui->page = 0;
 +    ui->pending_render_page = -1;
 +    ui->pending_render_dpi = 0;
++    ui->pending_render_tint = 0;
++    ui->pending_render_foreground = 0;
++    ui->pending_render_background = 0;
      ui->zoom = 0;
      ui->need_synctex = 1;
    }
@@ -269,8 +305,11 @@ index c202294..7f7b061 100644
 +      {
 +        int page = ui->pending_render_page;
 +        int dpi = ui->pending_render_dpi;
++        int tint = ui->pending_render_tint;
++        int foreground = ui->pending_render_foreground;
++        int background = ui->pending_render_background;
 +        ui->pending_render_page = -1;
-+        export_page_png(ps, ui, page, dpi);
++        export_page_png(ps, ui, page, dpi, tint, foreground, background);
 +      }
 +      else if (ui->pending_render_page >= 0 &&
 +               send(get_status, ui->eng) == DOC_TERMINATED)

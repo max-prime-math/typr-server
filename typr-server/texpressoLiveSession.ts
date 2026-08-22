@@ -13,6 +13,7 @@ import {
   type TexpressoDiagnostic,
   type TexpressoInitializeMessage,
   type TexpressoPageDescriptor,
+  type TexpressoRenderTheme,
   type TexpressoServerMessage
 } from "./texpressoWsProtocol.ts";
 import {
@@ -39,6 +40,7 @@ export class TexpressoLiveSession {
   private workspace: string | undefined;
   private session: LiveLatexSession | undefined;
   private renderDpi: number = TEXPRESSO_WS_LIMITS.defaultDpi;
+  private renderTheme: TexpressoRenderTheme | undefined;
   private initialized = false;
   private initializing = false;
   private processing = false;
@@ -153,6 +155,7 @@ export class TexpressoLiveSession {
       }
       this.session = session;
       this.renderDpi = message.render?.dpi ?? TEXPRESSO_WS_LIMITS.defaultDpi;
+      this.renderTheme = message.render?.theme;
       this.latestReceivedRevision = message.revision;
       this.appliedRevision = message.revision;
       this.initialized = true;
@@ -164,7 +167,7 @@ export class TexpressoLiveSession {
         sessionId: this.sessionId,
         revision: message.revision,
         processId: session.pid,
-        render: { dpi: this.renderDpi },
+        render: { dpi: this.renderDpi, ...(this.renderTheme ? { theme: this.renderTheme } : {}) },
         initialCompileMs: rounded(initialCompileMs)
       });
       const snapshot = session.snapshot();
@@ -290,7 +293,9 @@ export class TexpressoLiveSession {
     for (let page = 0; page <= TEXPRESSO_WS_LIMITS.maxPages; page += 1) {
       if (revision !== this.latestReceivedRevision && pages.length > 0) return false;
       try {
-        const rendered = await this.session.renderPage(page, this.renderDpi);
+        const rendered = await (this.session as LiveLatexSession & {
+          renderPage(page: number, dpi: number, theme?: TexpressoRenderTheme): Promise<TexpressoRenderedPage>;
+        }).renderPage(page, this.renderDpi, this.renderTheme);
         if (page === TEXPRESSO_WS_LIMITS.maxPages) {
           throw new Error(`Document exceeds the private transport limit of ${TEXPRESSO_WS_LIMITS.maxPages} pages.`);
         }

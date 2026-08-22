@@ -6,7 +6,8 @@ import {
   MAX_TEXPRESSO_RENDER_DPI,
   MIN_TEXPRESSO_RENDER_DPI,
   type TexpressoPosition,
-  type TexpressoRange
+  type TexpressoRange,
+  type TexpressoRenderTheme
 } from "../src/companion-protocol/texpresso.ts";
 import { prepareCompilerEnvironment, spawnSandboxed } from "./nativeProcess.ts";
 
@@ -240,18 +241,24 @@ export class TexpressoSession {
    * Rasterizes one current display-list page to PNG in the TeXpresso process.
    * This is intentionally an internal experimental adapter, not a Companion API.
    */
-  async renderPage(page: number, dpi = DEFAULT_TEXPRESSO_RENDER_DPI): Promise<TexpressoRenderedPage> {
+  async renderPage(
+    page: number,
+    dpi = DEFAULT_TEXPRESSO_RENDER_DPI,
+    theme?: TexpressoRenderTheme
+  ): Promise<TexpressoRenderedPage> {
     if (!Number.isInteger(page) || page < 0) throw new Error("TeXpresso page must be a non-negative integer.");
     if (!Number.isInteger(dpi) || dpi < MIN_TEXPRESSO_RENDER_DPI || dpi > MAX_TEXPRESSO_RENDER_DPI) {
       throw new Error(`TeXpresso render DPI must be between ${MIN_TEXPRESSO_RENDER_DPI} and ${MAX_TEXPRESSO_RENDER_DPI}.`);
     }
-    const cacheKey = `${page}:${dpi}`;
+    const cacheKey = renderCacheKey(page, dpi, theme);
     const cached = this.renderedPages.get(cacheKey);
     if (cached) return cloneRenderedPage(cached);
 
     const response = this.waitForPageImage(page, dpi);
     try {
-      this.send(["render-page", page, dpi]);
+      this.send(theme
+        ? ["render-page", page, dpi, theme.foreground, theme.background]
+        : ["render-page", page, dpi]);
     } catch (error) {
       void response.catch(() => {});
       throw error;
@@ -262,8 +269,12 @@ export class TexpressoSession {
   }
 
   /** Returns a retained last-known-good page without asking TeXpresso to rerender. */
-  getCachedPage(page: number, dpi = DEFAULT_TEXPRESSO_RENDER_DPI): TexpressoRenderedPage | undefined {
-    const cached = this.renderedPages.get(`${page}:${dpi}`);
+  getCachedPage(
+    page: number,
+    dpi = DEFAULT_TEXPRESSO_RENDER_DPI,
+    theme?: TexpressoRenderTheme
+  ): TexpressoRenderedPage | undefined {
+    const cached = this.renderedPages.get(renderCacheKey(page, dpi, theme));
     return cached ? cloneRenderedPage(cached) : undefined;
   }
 
@@ -514,6 +525,12 @@ export class TexpressoSession {
       for (const listener of this.unexpectedExitListeners) listener(error);
     }
   }
+}
+
+function renderCacheKey(page: number, dpi: number, theme?: TexpressoRenderTheme): string {
+  return theme
+    ? `${page}:${dpi}:${theme.foreground}:${theme.background}`
+    : `${page}:${dpi}:paper`;
 }
 
 function cloneRenderedPage(page: TexpressoRenderedPage): TexpressoRenderedPage {

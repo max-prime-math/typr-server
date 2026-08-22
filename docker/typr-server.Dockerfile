@@ -44,7 +44,7 @@ COPY docker/patches/texpresso-page-export.patch /tmp/texpresso-page-export.patch
 RUN git clone https://github.com/let-def/texpresso.git texpresso \
     && cd texpresso \
     && git checkout --detach "${TEXPRESSO_REV}" \
-    && git apply /tmp/texpresso-page-export.patch \
+    && git apply --recount /tmp/texpresso-page-export.patch \
     && make all
 
 COPY docker/typr-native-sandbox.c /tmp/typr-native-sandbox.c
