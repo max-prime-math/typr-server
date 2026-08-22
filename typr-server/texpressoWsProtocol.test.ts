@@ -14,20 +14,27 @@ describe("private TeXpresso WebSocket protocol", () => {
     expect(TEXPRESSO_WS_LIMITS.defaultDpi).toBe(240);
   });
 
-  it("accepts nested text files, binary assets, and a session DPI", () => {
+  it("accepts nested text files, binary assets, and native render settings", () => {
     const result = validateTexpressoClientMessage({
       type: "initialize",
       protocolVersion: 1,
       revision: 10,
       mainFilePath: "main.tex",
-      render: { dpi: 192 },
+      render: { dpi: 192, theme: { foreground: 0xcdd6f4, background: 0x1e1e2e } },
       files: [
         { path: "main.tex", kind: "text", content: "\\input{chapters/one}" },
         { path: "chapters/one.tex", kind: "text", content: "hello" },
         { path: "assets/pixel.png", kind: "binary", encoding: "base64", content: "AAEC" }
       ]
     });
-    expect(result).toMatchObject({ ok: true, message: { type: "initialize", revision: 10, render: { dpi: 192 } } });
+    expect(result).toMatchObject({
+      ok: true,
+      message: {
+        type: "initialize",
+        revision: 10,
+        render: { dpi: 192, theme: { foreground: 0xcdd6f4, background: 0x1e1e2e } }
+      }
+    });
   });
 
   it("rejects absurd DPI, traversal, malformed ranges, and invalid revisions", () => {
@@ -39,6 +46,7 @@ describe("private TeXpresso WebSocket protocol", () => {
       files: [{ path: "main.tex", kind: "text", content: "x" }]
     };
     expect(validateTexpressoClientMessage({ ...base, render: { dpi: 2000 } })).toMatchObject({ ok: false, code: "invalid-render-settings" });
+    expect(validateTexpressoClientMessage({ ...base, render: { theme: { foreground: -1, background: 0xffffff } } })).toMatchObject({ ok: false, code: "invalid-render-settings" });
     expect(validateTexpressoClientMessage({ ...base, mainFilePath: "../main.tex" })).toMatchObject({ ok: false, code: "invalid-project" });
     expect(validateTexpressoClientMessage({ type: "change", revision: 2, path: "main.tex", range: {}, text: "x" })).toMatchObject({ ok: false, code: "invalid-change" });
     expect(validateTexpressoClientMessage({ type: "change", revision: 0, path: "main.tex", range: {}, text: "x" })).toMatchObject({ ok: false, code: "invalid-revision" });

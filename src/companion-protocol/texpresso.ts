@@ -8,6 +8,18 @@ export const DEFAULT_TEXPRESSO_RENDER_DPI = 240;
 export const MIN_TEXPRESSO_RENDER_DPI = 72;
 export const MAX_TEXPRESSO_RENDER_DPI = 300;
 
+export interface TexpressoRenderTheme {
+  /** MuPDF RGB color (0x000000–0xffffff) used for document ink. */
+  foreground: number;
+  /** MuPDF RGB color (0x000000–0xffffff) used for the paper background. */
+  background: number;
+}
+
+export interface TexpressoRenderSettings {
+  dpi?: number;
+  theme?: TexpressoRenderTheme;
+}
+
 /** LSP-compatible, zero-based UTF-16 source position. */
 export interface TexpressoPosition {
   line: number;
@@ -24,7 +36,7 @@ export interface TexpressoInitializeMessage {
   protocolVersion: number;
   revision: number;
   mainFilePath: string;
-  render?: { dpi?: number };
+  render?: TexpressoRenderSettings;
   files: ProjectFile[];
 }
 
@@ -69,7 +81,7 @@ export type TexpressoServerMessage =
       sessionId: string;
       revision: number;
       processId: number;
-      render: { dpi: number };
+      render: { dpi: number; theme?: TexpressoRenderTheme };
       initialCompileMs: number;
     }
   | { type: "revision-started"; sessionId: string; revision: number; queueDepth: number }
