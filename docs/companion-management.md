@@ -82,8 +82,8 @@ volume-free on its stock-kernel fallback. Its users, service API keys, and
 enforcement setting are therefore session-only and reset when the container
 restarts. Do not enable service-key enforcement there unless every Typr client
 can be updated again after a restart. A persistent management-state mount may be
-used only where the native Landlock sandbox is working; the volume-free fallback
-rejects it.
+used only where the native Landlock sandbox is working. Both audited fallbacks
+reject additional host/data mounts.
 
 ## Live activity and logs
 

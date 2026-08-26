@@ -24,6 +24,7 @@ try {
   await assertBrokenSandboxFailsClosed(image);
   await assertExplicitStatelessFallback(image);
   await assertFallbackWorkspaceFailsClosed(image);
+  await assertExplicitTrustedWorkspaceFallback(image);
   await assertFallbackDataMountFailsClosed(image);
 
   workspaceRoot = await mkdtemp(resolve(tmpdir(), "typr-companion-docker-workspace-"));
@@ -440,6 +441,52 @@ async function assertFallbackWorkspaceFailsClosed(imageName) {
       "Mapped-workspace refusal must identify the failed native sandbox probe.");
     assert(!logs.includes("continuing only because"),
       "Mapped-workspace startup must never enter the stateless fallback.");
+  } finally {
+    await run("docker", ["rm", "--force", id], { allowFailure: true });
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function assertExplicitTrustedWorkspaceFallback(imageName) {
+  const root = await mkdtemp(resolve(tmpdir(), "typr-companion-trusted-workspace-"));
+  await chmod(root, 0o777);
+  await writeFile(resolve(root, "existing.typ"), "Trusted workspace fallback.\n");
+  const id = (await capture("docker", [
+    "create",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--read-only",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=536870912",
+    "--publish", "127.0.0.1::8484",
+    "--mount", `type=bind,src=${root},dst=/workspace`,
+    "--env", "TYPR_COMPANION_SANDBOX_EXECUTABLE=/bin/false",
+    "--env", "TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE=1",
+    "--env", "TYPR_COMPANION_WORKSPACE_ROOT=/workspace",
+    "--env", "TYPR_COMPANION_WORKSPACE_ID=trusted-docker-test",
+    imageName
+  ])).trim();
+  try {
+    await run("docker", ["start", id]);
+    const portOutput = await capture("docker", ["port", id, "8484/tcp"]);
+    const baseUrl = `http://127.0.0.1:${parsePublishedPort(portOutput)}`;
+    const status = await waitForStatus(baseUrl);
+    assert(status.capabilities?.filesystem?.projectStorage === true,
+      "The explicit trusted-workspace fallback must advertise mapped storage.");
+    assert(status.capabilities?.filesystem?.workspaceId === "trusted-docker-test",
+      "The trusted-workspace fallback must preserve its opaque workspace ID.");
+    const listing = await fetch(`${baseUrl}/api/v1/workspace/files`);
+    assert(listing.ok, "The trusted-workspace fallback must serve the scoped file API.");
+    const listed = await listing.json();
+    assert(listed.files?.some((file) => file.path === "existing.typ"),
+      "The trusted-workspace fallback must list mapped regular files.");
+    assertPdf(await compile(baseUrl, [
+      textFile("main.tex", "\\documentclass{article}\n\\begin{document}\nTrusted workspace fallback.\n\\end{document}\n")
+    ]), "an explicitly trusted workspace fallback compile");
+    const logs = await captureCombined("docker", ["logs", id]);
+    assert(logs.includes("TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE=1"),
+      "The trusted-workspace fallback must log its explicit opt-in.");
+    assert(logs.includes("compiler processes may access the mapped workspace"),
+      "The trusted-workspace fallback must log its weaker compiler boundary.");
   } finally {
     await run("docker", ["rm", "--force", id], { allowFailure: true });
     await rm(root, { recursive: true, force: true });
