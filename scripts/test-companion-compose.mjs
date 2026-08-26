@@ -31,11 +31,16 @@ function files(workspace = false) {
     : ["-f", "compose.yaml"];
 }
 
-function config({ workspace = false, workspaceDir = "/tmp/typr-companion-workspace-contract" } = {}) {
+function config({
+  workspace = false,
+  workspaceDir = "/tmp/typr-companion-workspace-contract",
+  trustedWorkspaceFallback = ""
+} = {}) {
   const result = run("docker", ["compose", ...files(workspace), "config", "--format", "json"], {
     env: {
       TYPR_COMPANION_IMAGE: image,
-      TYPR_COMPANION_WORKSPACE_DIR: workspaceDir
+      TYPR_COMPANION_WORKSPACE_DIR: workspaceDir,
+      TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE: trustedWorkspaceFallback
     }
   });
   return JSON.parse(result.stdout);
@@ -73,6 +78,12 @@ const workspaceConfig = config({ workspace: true });
 assertBaseConfig(workspaceConfig);
 assert.equal(workspaceConfig.services["typr-server"].environment.TYPR_COMPANION_WORKSPACE_ROOT, "/workspace");
 assert.equal(workspaceConfig.services["typr-server"].environment.TYPR_COMPANION_WORKSPACE_ID, "home-workspace");
+assert.equal(workspaceConfig.services["typr-server"].environment.TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE, "");
+const trustedWorkspaceConfig = config({ workspace: true, trustedWorkspaceFallback: "1" });
+assert.equal(
+  trustedWorkspaceConfig.services["typr-server"].environment.TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE,
+  "1"
+);
 const [workspaceMount] = workspaceConfig.services["typr-server"].volumes;
 assert.equal(workspaceMount.type, "bind");
 assert.equal(workspaceMount.source, "/tmp/typr-companion-workspace-contract");

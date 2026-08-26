@@ -18,10 +18,11 @@ transport and browser compatibility; service API keys and the GUI password do
 not make native TeX safe for hostile multi-tenant use.
 
 Stock Unraid kernels may not provide Landlock. This template therefore opts into
-a narrowly limited fallback: Companion may run without its native filesystem
-sandbox only while it is stateless and has no host workspace mounted. Keep this
-mode limited to mutually trusted documents. If any workspace is configured,
-Companion still requires Landlock and refuses startup when it is unavailable.
+a narrowly limited stateless fallback and offers a separate, disabled-by-default
+trusted-workspace fallback. Strict mode still refuses a mapped workspace when
+Landlock is unavailable. Setting the workspace fallback exactly to `1` accepts
+that native compiler processes may access the mapped files; use it only with
+mutually trusted users and documents.
 
 ## Install the template
 
@@ -46,15 +47,18 @@ template:
    default stateless deployment. The prefilled Workspace ID is ignored while
    the root is blank.
 8. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
-   This does not permit a mapped workspace without Landlock.
-9. Apply the template and wait for a healthy container.
+   This setting alone does not permit a mapped workspace without Landlock.
+9. Leave **Allow trusted workspace fallback** blank unless enabling the scoped
+   workspace on a kernel where the Landlock probe fails.
+10. Apply the template and wait for a healthy container.
 
 The template enforces UID 1000, non-privileged operation, dropped capabilities,
 no-new-privileges, a read-only root, 512 MiB no-exec tmpfs, 256 PIDs, 2 GiB
 memory/swap, and two CPUs. The image probes its Landlock launcher before
-listening. When that probe fails, the explicit template opt-in permits only the
-volume-free stateless fallback and logs a prominent trusted-document warning.
-Without that opt-in, or whenever a workspace is mapped, startup fails closed.
+listening. When that probe fails, the explicit template opt-ins permit either
+the volume-free stateless fallback or one audited workspace mount and log a
+prominent trusted-document warning. Without the matching opt-in, startup fails
+closed.
 
 Open the container's **WebUI** to reach port `8485`, then sign in as `typr` with
 the management password. The GUI shows advertised services and live activity
@@ -64,12 +68,12 @@ key enforcement starts disabled, preserving compatibility with old Typr clients.
 
 ## Optional mapped workspace
 
-Configure all three advanced workspace fields together:
-
-This mode requires an Unraid kernel with working Landlock support. Stock kernels
-that return `Landlock is unavailable` cannot safely enable the mapped workspace;
-leave the directory and API root blank. The stateless fallback never bypasses
-this check.
+Configure all three advanced workspace fields together. Landlock remains the
+preferred compiler boundary. On a stock kernel that reports `Landlock is
+unavailable`, also set **Allow trusted workspace fallback** to exactly `1` after
+accepting that native compiler processes may access the mapped files. The
+fallback audits the container mount table and refuses any additional host/data
+mount. Leave the field blank to retain fail-closed behavior.
 
 - **Workspace directory:** one newly created dedicated directory, mounted RW to
   `/workspace`.
@@ -85,7 +89,8 @@ The API exposes regular files below that exact root; it does not expose the host
 path or arbitrary browsing. Browser storage remains the primary copy and sync is
 manual. Unlinking or removing the container does not delete mapped files, but an
 explicit file-API deletion does delete that selected host file. Keep independent
-backups.
+backups. The trusted-workspace fallback is not a hostile multi-tenant boundary;
+API keys authenticate callers but do not confine native compiler children.
 
 ## Verify the container
 

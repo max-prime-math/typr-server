@@ -64,7 +64,7 @@ const actualExtraParams = new Set(one(template, "ExtraParams").text.trim().split
 assert.deepEqual(actualExtraParams, requiredExtraParams);
 
 const configs = template.children.filter((child) => child.tag === "Config");
-assert.equal(configs.length, 9);
+assert.equal(configs.length, 10);
 const byTarget = new Map(configs.map((config) => [config.attributes.Target, config]));
 assert.equal(byTarget.get("8484")?.attributes.Mode, "tcp");
 assert.equal(byTarget.get("8484")?.text, "8484");
@@ -77,6 +77,9 @@ assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.text, "");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOWED_ORIGINS")?.attributes.Description || "", /CORS is not authentication/i);
 assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.text, "1");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.attributes.Description || "", /no host workspace is mounted/i);
+assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE")?.text, "");
+assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE")?.attributes.Required, "false");
+assert.match(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE")?.attributes.Description || "", /compiler processes may access/i);
 assert.equal(byTarget.get("/workspace")?.attributes.Mode, "rw");
 assert.equal(byTarget.get("/workspace")?.attributes.Required, "false");
 assert.equal(byTarget.get("/workspace")?.text, "");

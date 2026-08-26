@@ -6,7 +6,11 @@ import { createManagementServer, shutdownManagementServer, type ManagedServiceDe
 import { createTyprServer, getCompanionRuntimeSnapshot, shutdownTyprServer } from "./server.ts";
 import { ServiceCatalog } from "./serviceCatalog.ts";
 import { WorkspaceStore } from "./workspaceStore.ts";
-import { parseUnsandboxedStatelessOptIn, resolveNativeSandbox } from "./sandboxPolicy.ts";
+import {
+  parseUnsandboxedStatelessOptIn,
+  parseUnsandboxedWorkspaceOptIn,
+  resolveNativeSandbox
+} from "./sandboxPolicy.ts";
 import { prepareWindowsPortableRuntime, windowsCompanionDataRoot } from "./windowsPortable.ts";
 
 await prepareWindowsPortableRuntime();
@@ -26,6 +30,9 @@ const workspaceRoot = process.env.TYPR_COMPANION_WORKSPACE_ROOT?.trim();
 const sandboxExecutable = await resolveNativeSandbox({
   allowUnsandboxedStateless: parseUnsandboxedStatelessOptIn(
     process.env.TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS
+  ),
+  allowUnsandboxedWorkspace: parseUnsandboxedWorkspaceOptIn(
+    process.env.TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE
   ),
   sandboxExecutable: process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE,
   workspaceRoot,
