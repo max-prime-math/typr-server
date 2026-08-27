@@ -79,6 +79,7 @@ RUN apt-get update \
         ca-certificates \
         cm-super \
         latexmk \
+        lmodern \
         libfontconfig1 \
         libfreetype6 \
         libgraphite2-3 \
@@ -101,6 +102,7 @@ RUN apt-get update \
         texlive-latex-extra \
         texlive-latex-recommended \
         texlive-pictures \
+        texlive-plain-generic \
         texlive-xetex \
     && rm -rf /var/lib/apt/lists/*
 

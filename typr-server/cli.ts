@@ -1,11 +1,15 @@
 import type { Server } from "node:http";
+import { mkdir, readFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { join } from "node:path";
 import { AccessStore } from "./accessStore.ts";
 import { ActivityBus } from "./activity.ts";
+import { ManagementAuthenticator } from "./managementAuth.ts";
 import { createManagementServer, shutdownManagementServer, type ManagedServiceDescriptor } from "./managementServer.ts";
-import { createTyprServer, getCompanionRuntimeSnapshot, shutdownTyprServer } from "./server.ts";
+import { createTyprServer, getCompanionRuntimeSnapshot, resetPdflatexAvailability, shutdownTyprServer } from "./server.ts";
+import { ProviderManager } from "./providerManager.ts";
 import { ServiceCatalog } from "./serviceCatalog.ts";
-import { WorkspaceStore } from "./workspaceStore.ts";
+import { WorkspaceStore, workspaceLimitsFromEnvironment } from "./workspaceStore.ts";
 import {
   parseUnsandboxedStatelessOptIn,
   parseUnsandboxedWorkspaceOptIn,
@@ -20,12 +24,34 @@ const managementPort = parsePort(process.env.TYPR_COMPANION_MANAGEMENT_PORT, 848
 if (managementPort === port) throw new Error("The Companion service and management GUI must use different ports.");
 const host = process.env.TYPR_COMPANION_HOST ?? "127.0.0.1";
 const managementHost = process.env.TYPR_COMPANION_MANAGEMENT_HOST?.trim() || "127.0.0.1";
-const administratorPassword = process.env.TYPR_COMPANION_MANAGEMENT_PASSWORD?.trim() || undefined;
+const managementPublicOrigin = process.env.TYPR_COMPANION_MANAGEMENT_PUBLIC_ORIGIN?.trim() || undefined;
+const administratorPassword = await readAdministratorPassword();
+const managementUsername = process.env.TYPR_COMPANION_MANAGEMENT_USERNAME?.trim() || "typr";
 const remoteManagement = !isLoopbackHost(managementHost);
-if (remoteManagement && (!administratorPassword || administratorPassword.length < 24)) {
-  throw new Error("Remote management requires TYPR_COMPANION_MANAGEMENT_PASSWORD with at least 24 characters.");
+if (remoteManagement && !administratorPassword) {
+  throw new Error("Remote management requires a management password or password file.");
 }
+const managementAuthenticator = administratorPassword
+  ? await ManagementAuthenticator.create({
+      username: managementUsername,
+      password: administratorPassword,
+      secureCookies: Boolean(managementPublicOrigin)
+    })
+  : undefined;
+delete process.env.TYPR_COMPANION_MANAGEMENT_PASSWORD;
 const configuredVersion = process.env.TYPR_COMPANION_VERSION?.trim();
+const dataRoot = process.env.TYPR_COMPANION_DATA_ROOT?.trim() ||
+  (process.platform === "win32" ? windowsCompanionDataRoot() : undefined);
+if (dataRoot) process.env.TYPR_COMPANION_DATA_ROOT = dataRoot;
+if (parseOptionalFlag(process.env.TYPR_COMPANION_MANAGED_WORKSPACE, "TYPR_COMPANION_MANAGED_WORKSPACE")) {
+  if (!dataRoot) throw new Error("TYPR_COMPANION_MANAGED_WORKSPACE=1 requires TYPR_COMPANION_DATA_ROOT.");
+  if (!process.env.TYPR_COMPANION_WORKSPACE_ROOT?.trim()) {
+    const managedWorkspace = join(dataRoot, "workspaces", "default");
+    await mkdir(managedWorkspace, { recursive: true, mode: 0o700 });
+    process.env.TYPR_COMPANION_WORKSPACE_ROOT = managedWorkspace;
+    process.env.TYPR_COMPANION_WORKSPACE_ID = "managed-default";
+  }
+}
 const workspaceRoot = process.env.TYPR_COMPANION_WORKSPACE_ROOT?.trim();
 const sandboxExecutable = await resolveNativeSandbox({
   allowUnsandboxedStateless: parseUnsandboxedStatelessOptIn(
@@ -41,13 +67,27 @@ const sandboxExecutable = await resolveNativeSandbox({
 if (sandboxExecutable) process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE = sandboxExecutable;
 else delete process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE;
 const workspace = workspaceRoot ? await WorkspaceStore.open(workspaceRoot, {
-  workspaceId: process.env.TYPR_COMPANION_WORKSPACE_ID?.trim() || "default"
+  workspaceId: process.env.TYPR_COMPANION_WORKSPACE_ID?.trim() || "default",
+  limits: workspaceLimitsFromEnvironment()
 }) : undefined;
 const activity = new ActivityBus();
+let services: ServiceCatalog | undefined;
+const providers = await ProviderManager.open({
+  dataRoot,
+  onEvent: (event) => activity.publish({
+    serviceId: event.providerId === "tinytex" ? "latex" : `lsp-${event.providerId}`,
+    level: event.level,
+    type: event.type,
+    message: event.message,
+    ...(event.metadata ? { metadata: event.metadata } : {})
+  }),
+  onChanged: async () => {
+    resetPdflatexAvailability();
+    await services?.snapshot(true);
+  }
+});
 const configuredStatePath = process.env.TYPR_COMPANION_MANAGEMENT_STATE?.trim();
-const statePath = configuredStatePath || (process.platform === "win32"
-  ? join(windowsCompanionDataRoot(), "management.json")
-  : undefined);
+const statePath = configuredStatePath || (dataRoot ? join(dataRoot, "management.json") : undefined);
 const access = await AccessStore.open(statePath);
 const server = createTyprServer({
   ...(configuredVersion ? { serverVersion: configuredVersion } : {}),
@@ -55,14 +95,16 @@ const server = createTyprServer({
   activity,
   access
 });
-const services = new ServiceCatalog(() => getCompanionRuntimeSnapshot(server));
+services = new ServiceCatalog(() => getCompanionRuntimeSnapshot(server));
 const managementServer = createManagementServer({
   access,
   activity,
+  providers,
   servicePort: port,
-  getServices: async (forceRefresh) => [managementDescriptor(), ...await services.snapshot(forceRefresh)],
+  getServices: async (forceRefresh) => [managementDescriptor(), ...await services!.snapshot(forceRefresh)],
   allowRemote: remoteManagement,
-  ...(administratorPassword ? { administratorPassword } : {})
+  ...(managementAuthenticator ? { authenticator: managementAuthenticator } : {}),
+  ...(managementPublicOrigin ? { publicOrigin: managementPublicOrigin } : {})
 });
 
 await listen(server, port, host);
@@ -73,7 +115,7 @@ try {
   throw error;
 }
 console.log(`typr-server listening on http://${host}:${port}`);
-console.log(`Typr Companion management GUI: http://${managementHost}:${managementPort}`);
+console.log(`Typr Companion management GUI: ${managementPublicOrigin ?? `http://${managementHost}:${managementPort}`}`);
 activity.publish({
   serviceId: "management",
   level: "info",
@@ -102,8 +144,8 @@ function managementDescriptor(): ManagedServiceDescriptor {
     status: "ready",
     advertised: false,
     active: 0,
-    description: "Loopback-only service visibility, access control, and live activity.",
-    capabilities: ["service-catalog", "users", "api-keys", "live-activity"]
+    description: "Authenticated service visibility, access control, and live activity.",
+    capabilities: ["session-login", "service-catalog", "users", "api-keys", "live-activity"]
   };
 }
 
@@ -137,4 +179,23 @@ function parsePort(value: string | undefined, fallback: number): number {
 function isLoopbackHost(value: string): boolean {
   const normalized = value.toLowerCase();
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+function parseOptionalFlag(value: string | undefined, name: string): boolean {
+  const normalized = value?.trim();
+  if (!normalized) return false;
+  if (normalized === "1") return true;
+  throw new Error(`${name} must be unset or exactly 1.`);
+}
+
+async function readAdministratorPassword(): Promise<string | undefined> {
+  const inline = process.env.TYPR_COMPANION_MANAGEMENT_PASSWORD;
+  const file = process.env.TYPR_COMPANION_MANAGEMENT_PASSWORD_FILE?.trim();
+  if (inline && file) throw new Error("Set only one of TYPR_COMPANION_MANAGEMENT_PASSWORD or TYPR_COMPANION_MANAGEMENT_PASSWORD_FILE.");
+  if (inline) return inline;
+  if (!file) return undefined;
+  if (!isAbsolute(file)) throw new Error("TYPR_COMPANION_MANAGEMENT_PASSWORD_FILE must be an absolute path.");
+  const value = (await readFile(file, "utf8")).replace(/\r?\n$/u, "");
+  if (!value) throw new Error("TYPR_COMPANION_MANAGEMENT_PASSWORD_FILE is empty.");
+  return value;
 }

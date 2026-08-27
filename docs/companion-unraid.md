@@ -113,7 +113,8 @@ Unraid server. An HTTPS Typr page also cannot call a plain HTTP/WS Companion
 because the browser blocks mixed content. Create a dedicated client-trusted HTTPS
 hostname restricted by firewall or VPN to trusted clients. Forward it to
 `http://UNRAID-IP:8484`, enable WebSocket upgrades, use a long read timeout, and
-allow request bodies of at least 25 MiB. For example:
+allow request bodies of at least 90 MiB so a base64-encoded 64 MiB workspace
+file can pass through. For example:
 
 ```nginx
 location / {
@@ -123,7 +124,7 @@ location / {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
-    client_max_body_size 25m;
+    client_max_body_size 90m;
 }
 ```
 

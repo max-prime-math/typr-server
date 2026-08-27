@@ -98,7 +98,9 @@ treated as document data.
 
 Activity history is deliberately process-local: it clears on restart and does
 not create an unbounded log database. The GUI reconnects automatically if the
-event stream is interrupted.
+event stream is interrupted. Routine API request start/completion events are
+hidden from the activity list by default. Enable **Show API requests** above the
+list to include them; the browser remembers this display preference locally.
 
 ## Management security boundary
 

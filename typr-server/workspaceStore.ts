@@ -24,10 +24,34 @@ import { isWindowsUnsafePathSegment } from "./projectFiles.ts";
 const INTERNAL_WRITE_PREFIX = ".typr-companion-write-";
 
 export const DEFAULT_WORKSPACE_LIMITS: Readonly<WorkspaceLimits> = Object.freeze({
-  maxFileBytes: 16 * 1024 * 1024,
+  maxFileBytes: 64 * 1024 * 1024,
   maxEntries: 4096,
   maxWorkspaceBytes: 256 * 1024 * 1024
 });
+
+export function workspaceLimitsFromEnvironment(
+  environment: NodeJS.ProcessEnv = process.env
+): WorkspaceLimits {
+  const limits = {
+    maxFileBytes: configuredPositiveInteger(
+      environment.TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES,
+      "TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES",
+      DEFAULT_WORKSPACE_LIMITS.maxFileBytes
+    ),
+    maxEntries: configuredPositiveInteger(
+      environment.TYPR_COMPANION_WORKSPACE_MAX_ENTRIES,
+      "TYPR_COMPANION_WORKSPACE_MAX_ENTRIES",
+      DEFAULT_WORKSPACE_LIMITS.maxEntries
+    ),
+    maxWorkspaceBytes: configuredPositiveInteger(
+      environment.TYPR_COMPANION_WORKSPACE_MAX_BYTES,
+      "TYPR_COMPANION_WORKSPACE_MAX_BYTES",
+      DEFAULT_WORKSPACE_LIMITS.maxWorkspaceBytes
+    )
+  };
+  validateLimits(limits);
+  return limits;
+}
 
 const MAX_PATH_BYTES = 1024;
 const MAX_SEGMENT_BYTES = 255;
@@ -360,6 +384,22 @@ function validateLimits(limits: WorkspaceLimits): void {
       limits.maxFileBytes > limits.maxWorkspaceBytes) {
     throw new Error("Workspace limits must be positive safe integers and maxFileBytes cannot exceed maxWorkspaceBytes.");
   }
+}
+
+function configuredPositiveInteger(
+  value: string | undefined,
+  name: string,
+  fallback: number
+): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  if (!/^[1-9]\d*$/u.test(value.trim())) {
+    throw new Error(`${name} must be a positive integer number of bytes or entries.`);
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`${name} must be a positive safe integer.`);
+  }
+  return parsed;
 }
 
 function isNotFound(error: unknown): boolean {

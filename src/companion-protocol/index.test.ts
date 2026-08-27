@@ -90,6 +90,12 @@ describe("Typr Companion protocol", () => {
         encoding: "base64",
         content: "JVBERi0="
       },
+      synctex: {
+        path: "out/document.synctex.gz",
+        mediaType: "application/gzip",
+        encoding: "base64",
+        content: "H4sIAA=="
+      },
       log: "Compilation completed.",
       durationMs: 42
     };

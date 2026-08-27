@@ -1,8 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { AccessStore, AccessStoreError } from "./accessStore.ts";
 import { ActivityBus, type ActivityEvent } from "./activity.ts";
-import { MANAGEMENT_UI_HTML } from "./managementUi.ts";
+import { ManagementAuthenticator, type ManagementSession } from "./managementAuth.ts";
+import { MANAGEMENT_LOGIN_HTML, MANAGEMENT_UI_HTML } from "./managementUi.ts";
+import { ProviderManager, ProviderManagerError } from "./providerManager.ts";
 
 export type ManagedServiceStatus = "ready" | "busy" | "degraded" | "detected" | "unavailable" | "error";
 
@@ -25,10 +27,12 @@ export interface ManagedServiceDescriptor {
 export interface ManagementServerOptions {
   access: AccessStore;
   activity: ActivityBus;
+  providers?: ProviderManager;
   servicePort: number;
   getServices: (forceRefresh?: boolean) => Promise<ManagedServiceDescriptor[]>;
   allowRemote?: boolean;
-  administratorPassword?: string;
+  authenticator?: ManagementAuthenticator;
+  publicOrigin?: string;
 }
 
 interface ManagementContext {
@@ -38,28 +42,77 @@ interface ManagementContext {
 const contexts = new WeakMap<Server, ManagementContext>();
 const MAX_MANAGEMENT_BODY_BYTES = 64 * 1024;
 const MANAGEMENT_HEADER = "x-typr-management";
+const CSRF_HEADER = "x-typr-csrf";
+const MANAGEMENT_CSP = contentSecurityPolicy([MANAGEMENT_LOGIN_HTML, MANAGEMENT_UI_HTML]);
 
-/** Creates the management GUI/API server. Remote mode requires HTTP Basic authentication. */
+/** Creates the management GUI/API server. Remote mode requires session authentication. */
 export function createManagementServer(options: ManagementServerOptions): Server {
-  if (options.allowRemote && !validAdministratorPassword(options.administratorPassword)) {
-    throw new Error("Remote management requires a TYPR_COMPANION_MANAGEMENT_PASSWORD of at least 24 characters.");
+  if (options.allowRemote && !options.authenticator) throw new Error("Remote management requires configured administrator authentication.");
+  const publicOrigin = options.publicOrigin ? normalizePublicOrigin(options.publicOrigin) : undefined;
+  if (publicOrigin && !options.authenticator?.secureCookies) {
+    throw new Error("Public management requires secure session cookies.");
   }
   const context: ManagementContext = { clients: new Set() };
   const server = createServer(async (request, response) => {
-    applySecurityHeaders(response);
-    if (!options.allowRemote && !hasLoopbackHost(request)) {
-      sendJson(response, 421, { error: { code: "loopback-host-required", message: "Management accepts loopback Host headers only." } });
-      return;
-    }
-    if (options.administratorPassword && !hasAdministratorAuthorization(request, options.administratorPassword)) {
-      response.setHeader("WWW-Authenticate", 'Basic realm="Typr Companion Management", charset="UTF-8"');
-      sendJson(response, 401, { error: { code: "management-authentication-required", message: "Management administrator authentication is required." } });
-      return;
-    }
+    applySecurityHeaders(response, Boolean(publicOrigin));
     try {
-      await handleManagementRequest(request, response, server, context, options);
+      if (!options.allowRemote && !hasLoopbackHost(request)) {
+        sendJson(response, 421, { error: { code: "loopback-host-required", message: "Management accepts loopback Host headers only." } });
+        return;
+      }
+      if (publicOrigin && !hasExpectedPublicHost(request, publicOrigin)) {
+        sendJson(response, 421, { error: { code: "management-host-mismatch", message: "Management Host does not match its configured public origin." } });
+        return;
+      }
+
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const session = options.authenticator?.session(request.headers.cookie);
+      if (request.method === "GET" && url.pathname === "/login") {
+        if (session) redirect(response, "/");
+        else sendHtml(response, MANAGEMENT_LOGIN_HTML);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        if (!options.authenticator) {
+          sendJson(response, 404, { error: { code: "authentication-disabled", message: "Management login is disabled in local mode." } });
+          return;
+        }
+        requireSameOrigin(request, publicOrigin);
+        const body = await readManagementBody(request);
+        if (!isRecord(body) || typeof body.username !== "string" || typeof body.password !== "string") {
+          throw invalidBody("Login body must contain username and password.");
+        }
+        const login = await options.authenticator.login(
+          body.username,
+          body.password,
+          request.socket.remoteAddress ?? "unknown"
+        );
+        if (!login.ok) {
+          if (login.retryAfterSeconds) response.setHeader("Retry-After", String(login.retryAfterSeconds));
+          sendJson(response, login.retryAfterSeconds ? 429 : 401, {
+            error: { code: "management-login-failed", message: "The username or password was not accepted." }
+          });
+          return;
+        }
+        response.setHeader("Set-Cookie", login.setCookie!);
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (options.authenticator && !session) {
+        if (request.method === "GET" && url.pathname === "/") redirect(response, "/login");
+        else sendJson(response, 401, { error: { code: "management-authentication-required", message: "Management administrator authentication is required." } });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+        requireManagementIntent(request, options.authenticator, session);
+        response.setHeader("Set-Cookie", options.authenticator!.logout(request.headers.cookie));
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+      await handleManagementRequest(request, response, server, context, options, session);
     } catch (error) {
-      if (error instanceof AccessStoreError) {
+      if (error instanceof AccessStoreError || error instanceof ProviderManagerError) {
         sendJson(response, error.status, { error: { code: error.code, message: error.message } });
         return;
       }
@@ -83,7 +136,8 @@ async function handleManagementRequest(
   response: ServerResponse,
   server: Server,
   context: ManagementContext,
-  options: ManagementServerOptions
+  options: ManagementServerOptions,
+  session: ManagementSession | undefined
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (request.method === "GET" && url.pathname === "/") {
@@ -99,6 +153,12 @@ async function handleManagementRequest(
     sendJson(response, 200, {
       servicePort: options.servicePort,
       managementPort: address && typeof address !== "string" ? address.port : null,
+      management: {
+        authenticated: Boolean(session),
+        ...(session ? { username: session.username, csrfToken: session.csrfToken, expiresAt: session.expiresAt } : {}),
+        publicOrigin: options.publicOrigin ?? null
+      },
+      providerManagement: options.providers?.snapshot() ?? { enabled: false, providers: [], jobs: [] },
       services: await options.getServices(),
       access: options.access.snapshot(),
       activity: options.activity.snapshot({ limit: 1_000 })
@@ -114,7 +174,7 @@ async function handleManagementRequest(
     response.writeHead(204).end();
     return;
   }
-  requireManagementIntent(request);
+  requireManagementIntent(request, options.authenticator, session);
 
   if (request.method === "POST" && url.pathname === "/api/services/refresh") {
     await options.getServices(true);
@@ -125,6 +185,35 @@ async function handleManagementRequest(
       message: "Provider discovery was refreshed from the management console."
     });
     sendJson(response, 200, { ok: true });
+    return;
+  }
+  const providerInstallMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/install$/u);
+  if (request.method === "POST" && providerInstallMatch) {
+    if (!options.providers) throw new ProviderManagerError(409, "provider-management-disabled", "Provider management is disabled.");
+    const job = options.providers.startInstall(decodeURIComponent(providerInstallMatch[1]));
+    options.activity.publish({
+      serviceId: `provider-${job.providerId}`,
+      level: "info",
+      type: "provider-install-queued",
+      message: `Queued installation for ${job.providerId}.`,
+      metadata: { jobId: job.id }
+    });
+    sendJson(response, 202, { job });
+    return;
+  }
+  const providerMatch = url.pathname.match(/^\/api\/providers\/([^/]+)$/u);
+  if (request.method === "PATCH" && providerMatch) {
+    if (!options.providers) throw new ProviderManagerError(409, "provider-management-disabled", "Provider management is disabled.");
+    const body = await readManagementBody(request);
+    if (!isRecord(body) || body.active !== true) throw invalidBody("Provider update must set active to true.");
+    await options.providers.activateTexProvider(decodeURIComponent(providerMatch[1]));
+    options.activity.publish({
+      serviceId: "latex",
+      level: "info",
+      type: "tex-provider-activated",
+      message: `Activated TeX provider ${decodeURIComponent(providerMatch[1])}.`
+    });
+    sendJson(response, 200, { providerManagement: options.providers.snapshot() });
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/users") {
@@ -227,9 +316,16 @@ async function readManagementBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function requireManagementIntent(request: IncomingMessage): void {
+function requireManagementIntent(
+  request: IncomingMessage,
+  authenticator: ManagementAuthenticator | undefined,
+  session: ManagementSession | undefined
+): void {
   if (request.headers[MANAGEMENT_HEADER] !== "1") {
     throw new AccessStoreError(400, "management-header-required", "X-Typr-Management: 1 is required for management mutations.");
+  }
+  if (authenticator && (!session || !authenticator.validCsrf(session, stringHeader(request.headers[CSRF_HEADER])))) {
+    throw new AccessStoreError(403, "management-csrf-required", "A valid management CSRF token is required.");
   }
 }
 
@@ -243,32 +339,16 @@ function hasLoopbackHost(request: IncomingMessage): boolean {
   }
 }
 
-function hasAdministratorAuthorization(request: IncomingMessage, password: string): boolean {
-  const authorization = request.headers.authorization;
-  if (typeof authorization !== "string" || !authorization.startsWith("Basic ")) return false;
-  let decoded: string;
-  try {
-    decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
-  } catch {
-    return false;
-  }
-  const separator = decoded.indexOf(":");
-  if (separator < 0 || decoded.slice(0, separator) !== "typr") return false;
-  const supplied = Buffer.from(decoded.slice(separator + 1), "utf8");
-  const expected = Buffer.from(password, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
-}
-
-function validAdministratorPassword(password: string | undefined): password is string {
-  return Boolean(password && password.length >= 24);
-}
-
-function applySecurityHeaders(response: ServerResponse): void {
+function applySecurityHeaders(response: ServerResponse, publicMode: boolean): void {
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  response.setHeader("Content-Security-Policy", MANAGEMENT_CSP);
+  response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
+  if (publicMode) response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
 }
 
 function sendHtml(response: ServerResponse, html: string): void {
@@ -280,6 +360,72 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   const json = JSON.stringify(body);
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(json) });
   response.end(json);
+}
+
+function redirect(response: ServerResponse, location: string): void {
+  response.writeHead(303, { Location: location, "Content-Length": "0" });
+  response.end();
+}
+
+function normalizePublicOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("TYPR_COMPANION_MANAGEMENT_PUBLIC_ORIGIN must be an exact HTTPS origin.");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("TYPR_COMPANION_MANAGEMENT_PUBLIC_ORIGIN must be an exact HTTPS origin.");
+  }
+  return url.origin;
+}
+
+function hasExpectedPublicHost(request: IncomingMessage, publicOrigin: string): boolean {
+  return request.headers.host?.toLowerCase() === new URL(publicOrigin).host.toLowerCase();
+}
+
+function requireSameOrigin(request: IncomingMessage, publicOrigin: string | undefined): void {
+  const origin = stringHeader(request.headers.origin);
+  if (publicOrigin) {
+    if (origin !== publicOrigin) throw new AccessStoreError(403, "management-origin-forbidden", "Management login requires its configured public origin.");
+    return;
+  }
+  if (!origin) return;
+  const host = request.headers.host;
+  try {
+    if (!host || new URL(origin).host.toLowerCase() !== host.toLowerCase()) throw new Error("mismatch");
+  } catch {
+    throw new AccessStoreError(403, "management-origin-forbidden", "Management login requires a same-origin request.");
+  }
+}
+
+function stringHeader(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function contentSecurityPolicy(documents: string[]): string {
+  const scripts = new Set<string>();
+  const styles = new Set<string>();
+  for (const document of documents) {
+    for (const match of document.matchAll(/<script>([\s\S]*?)<\/script>/gu)) scripts.add(cspHash(match[1]));
+    for (const match of document.matchAll(/<style>([\s\S]*?)<\/style>/gu)) styles.add(cspHash(match[1]));
+  }
+  return [
+    "default-src 'none'",
+    `script-src ${[...scripts].join(" ")}`,
+    `style-src ${[...styles].join(" ")}`,
+    "connect-src 'self'",
+    "img-src 'none'",
+    "font-src 'none'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'"
+  ].join("; ");
+}
+
+function cspHash(source: string): string {
+  return `'sha256-${createHash("sha256").update(source, "utf8").digest("base64")}'`;
 }
 
 function invalidBody(message: string): AccessStoreError {

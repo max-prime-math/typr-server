@@ -13,7 +13,7 @@ The standalone local `typr-server` implementation is in [`typr-server`](../typr-
 - Compile responses are a discriminated `CompileResult`: `{ ok: true }` includes a base64 PDF, log, engine, and duration; `{ ok: false }` includes the engine, compiler log, a small list of useful errors, and duration when available.
 - When an administrator explicitly maps one fixed workspace, `GET /api/v1/workspace/files` lists regular files and `GET`, `PUT`, and `DELETE /api/v1/workspace/file?path=...` read or conditionally mutate one file. Binary content uses base64; writes require `X-Typr-Workspace-Mutation: 1` plus `If-None-Match: *` for creation or an exact strong `If-Match` ETag for update/deletion.
 
-Workspace storage is disabled when `TYPR_COMPANION_WORKSPACE_ROOT` is unset. When enabled, status advertises `projectStorage: true`, workspace API version 1, an opaque `workspaceId`, writability, and enforced limits. Paths are relative POSIX paths; absolute paths, traversal, `.git`, symlinks, special files, and internal temporary names are rejected. Writes use same-directory atomic replacement. The API intentionally has no arbitrary directory selection, command execution, Git access, recursive deletion, move, watch, or public-network security model.
+Workspace storage is disabled when `TYPR_COMPANION_WORKSPACE_ROOT` is unset. When enabled, status advertises `projectStorage: true`, workspace API version 1, an opaque `workspaceId`, writability, and enforced limits. The default limits are 64 MiB per file, 4,096 files, and 256 MiB total. Paths are relative POSIX paths; absolute paths, traversal, `.git`, symlinks, special files, and internal temporary names are rejected. Writes use same-directory atomic replacement. The API intentionally has no arbitrary directory selection, command execution, Git access, recursive deletion, move, watch, or public-network security model.
 
 ## Versioning and negotiation
 
@@ -55,7 +55,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 
 If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` compile request receives a typed `native-compiler-unavailable` failure rather than terminating the server.
 
-By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
+By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on ports 5173 and 5174. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
 
 The separate management GUI on port `8485` can enable optional API-key
 authentication. It stays on loopback by default; explicit remote-container mode
@@ -129,6 +129,9 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_ALLOWED_ORIGINS` | official Typr and local Vite origins | Optional comma-separated exact-origin override, shared with the native server. |
 | `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
 | `TYPR_COMPANION_WORKSPACE_ID` | `default` | Opaque stable identity used by browser bindings; it is not a host path. |
+| `TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES` | `67108864` | Maximum bytes allowed for one mapped-workspace file. |
+| `TYPR_COMPANION_WORKSPACE_MAX_ENTRIES` | `4096` | Maximum regular-file count in the mapped workspace. |
+| `TYPR_COMPANION_WORKSPACE_MAX_BYTES` | `268435456` | Maximum total workspace bytes; it must be at least the per-file limit. |
 | `TYPR_COMPANION_SANDBOX_EXECUTABLE` | `/usr/local/bin/typr-native-sandbox` | Default fail-closed native compiler launcher. A mapped workspace is refused if this is unavailable unless the separate trusted-workspace fallback is explicitly enabled. |
 | `TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS` | unset | Set exactly `1` only to permit a warned, volume-free trusted-document fallback when the launcher probe fails. It does not enable a mapped workspace. |
 | `TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE` | unset | Set exactly `1` only to permit one warned, audited workspace mount when the launcher probe fails. Native compiler processes may access mapped files; use only mutually trusted users and documents. |
@@ -141,7 +144,7 @@ The image uses the multi-architecture `node:22.23.2-bookworm-slim` base, matchin
 
 - `latexmk`
 - `texlive-latex-base`, `texlive-latex-recommended`, and `texlive-latex-extra`
-- `texlive-fonts-recommended` and `texlive-pictures`
+- `lmodern`, `texlive-fonts-recommended`, `texlive-pictures`, and `texlive-plain-generic`
 - `texlive-bibtex-extra` and `biber`
 - `texlive-xetex` (required by the experimental TeXpresso build)
 
