@@ -20,6 +20,21 @@ export function commandAvailable(command: string): Promise<boolean> {
   });
 }
 
+export function commandCanSpawn(command: string): Promise<boolean> {
+  return new Promise((resolveAvailability) => {
+    let settled = false;
+    const child = spawn(command, ["--version"], { shell: false, stdio: "ignore" });
+    child.once("spawn", () => {
+      settled = true;
+      resolveAvailability(true);
+      child.kill();
+    });
+    child.once("error", () => {
+      if (!settled) resolveAvailability(false);
+    });
+  });
+}
+
 export async function nativeToolAvailable(tool: NativeTool): Promise<boolean> {
   return commandAvailable(nativeTool(tool));
 }

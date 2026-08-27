@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { hasLatexError, offsetToPosition, pngDimensions, positionToOffset } from "./texpressoSession.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TexpressoSession, hasLatexError, offsetToPosition, pngDimensions, positionToOffset } from "./texpressoSession.ts";
 
 describe("TeXpresso session helpers", () => {
   it("uses LSP-compatible UTF-16 line and column positions", () => {
@@ -22,5 +25,20 @@ describe("TeXpresso session helpers", () => {
       0x00, 0x00, 0x03, 0xe1, 0x00, 0x00, 0x05, 0x7c
     ]);
     expect(pngDimensions(header)).toEqual({ width: 993, height: 1404 });
+  });
+
+  it("reports a missing executable without crashing the Companion process", async () => {
+    const root = await mkdtemp(join(tmpdir(), "typr-texpresso-missing-"));
+
+    try {
+      await expect(TexpressoSession.start({
+        projectRoot: root,
+        mainFilePath: "main.tex",
+        files: [{ path: "main.tex", content: "\\documentclass{article}" }],
+        executable: "typr-definitely-missing-texpresso"
+      })).rejects.toThrow(/TeXpresso failed to start.*ENOENT/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

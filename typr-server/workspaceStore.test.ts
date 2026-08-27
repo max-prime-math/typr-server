@@ -5,7 +5,8 @@ import { join } from "node:path";
 import {
   WorkspaceError,
   WorkspaceStore,
-  validateWorkspacePath
+  validateWorkspacePath,
+  workspaceLimitsFromEnvironment
 } from "./workspaceStore.ts";
 import { validateProjectPath } from "./projectFiles.ts";
 
@@ -16,6 +17,25 @@ afterEach(async () => {
 });
 
 describe("WorkspaceStore", () => {
+  it("loads optional workspace limits from the environment", () => {
+    expect(workspaceLimitsFromEnvironment({
+      TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES: "268435456",
+      TYPR_COMPANION_WORKSPACE_MAX_ENTRIES: "8192",
+      TYPR_COMPANION_WORKSPACE_MAX_BYTES: "1073741824"
+    })).toEqual({
+      maxFileBytes: 268435456,
+      maxEntries: 8192,
+      maxWorkspaceBytes: 1073741824
+    });
+    expect(() => workspaceLimitsFromEnvironment({
+      TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES: "not-a-number"
+    })).toThrow(/positive integer/u);
+    expect(() => workspaceLimitsFromEnvironment({
+      TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES: "300",
+      TYPR_COMPANION_WORKSPACE_MAX_BYTES: "200"
+    })).toThrow(/cannot exceed/u);
+  });
+
   it("lists regular files deterministically while excluding .git", async () => {
     const root = await createRoot();
     await mkdir(join(root, "nested"));

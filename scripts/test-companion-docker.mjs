@@ -100,6 +100,11 @@ try {
   ]);
   assertPdf(simpleResult, "a simple LaTeX document");
 
+  const latinModernResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\usepackage{lmodern,stackengine}\n\\begin{document}\nLatin Modern and stackengine from Docker.\n\\end{document}\n")
+  ]);
+  assertPdf(latinModernResult, "a LaTeX document using Latin Modern and stackengine");
+
   const multiFileResult = await compile(baseUrl, [
     textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapters/intro}\n\\end{document}\n"),
     textFile("chapters/intro.tex", "Hello from a nested file.\n")

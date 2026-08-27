@@ -146,6 +146,14 @@ export interface CompileOutput {
   content: string;
 }
 
+/** Optional source map emitted by a SyncTeX-enabled LaTeX compilation. */
+export interface CompileSynctexOutput {
+  path: string;
+  mediaType: "application/gzip";
+  encoding: "base64";
+  content: string;
+}
+
 /** Minimal compiler-provided error context; richer diagnostics belong to LSP. */
 export interface CompileError {
   code: string;
@@ -159,6 +167,7 @@ export interface CompileSuccess {
   ok: true;
   engine: CompileEngine;
   output: CompileOutput;
+  synctex?: CompileSynctexOutput;
   log: string;
   durationMs: number;
 }

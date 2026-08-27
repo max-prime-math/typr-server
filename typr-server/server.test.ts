@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { Server } from "node:http";
 import WebSocket from "ws";
 import {
@@ -56,6 +57,23 @@ describe("typr-server Companion API", () => {
       expect(response.headers.get("access-control-allow-origin")).toBe(origin);
     }
   );
+
+  it.each([
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://[::1]:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://[::1]:5174"
+  ])("allows the local Typr development origin %s by default", async (origin) => {
+    const baseUrl = await startServer(createTyprServer({ isPdflatexAvailable: async () => true }));
+    const response = await fetch(`${baseUrl}/api/v1/status`, {
+      headers: { Origin: origin }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+  });
 
   it("opts an allowed Typr origin into private-network preflights", async () => {
     const baseUrl = await startServer(createTyprServer({ isPdflatexAvailable: async () => true }));
@@ -122,7 +140,7 @@ describe("typr-server Companion API", () => {
           workspaceId: "primary-workspace",
           writable: true,
           limits: {
-            maxFileBytes: 16 * 1024 * 1024,
+            maxFileBytes: 64 * 1024 * 1024,
             maxEntries: 4096,
             maxWorkspaceBytes: 256 * 1024 * 1024
           }
@@ -354,6 +372,40 @@ describe("typr-server Companion API", () => {
     const result = await response.json();
     expect(result).toMatchObject({ ok: true, engine: "pdflatex", output: { path: "main.pdf" } });
     expect(Buffer.from(result.output.content, "base64").subarray(0, 4).toString()).toBe("%PDF");
+    expect(result.synctex).toMatchObject({
+      path: "main.synctex.gz",
+      mediaType: "application/gzip",
+      encoding: "base64"
+    });
+    const synctex = gunzipSync(Buffer.from(result.synctex.content, "base64")).toString("utf8");
+    expect(synctex).toContain("Input:1:main.tex");
+    expect(synctex).toContain("chapters/intro.tex");
+    expect(synctex).not.toContain("/typr-companion-");
+  });
+
+  it("resolves nested main-document inputs from the main document directory", async () => {
+    if (!(await hostHasPdflatex())) return;
+    const baseUrl = await startServer(createTyprServer());
+    const response = await postJson(baseUrl, {
+      protocolVersion: 1,
+      engine: "pdflatex",
+      mainFilePath: "Booklet 1/main.tex",
+      files: [
+        {
+          path: "Booklet 1/main.tex",
+          kind: "text",
+          content: "\\documentclass{article}\n\\begin{document}\n\\input{figures/numberline}\n\\end{document}\n"
+        },
+        { path: "Booklet 1/figures/numberline.tex", kind: "text", content: "Nested project input.\n" }
+      ]
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      engine: "pdflatex",
+      output: { path: "Booklet 1/main.pdf" }
+    });
   });
 
   it("returns a typed compile failure for invalid LaTeX source", async () => {

@@ -64,7 +64,7 @@ const actualExtraParams = new Set(one(template, "ExtraParams").text.trim().split
 assert.deepEqual(actualExtraParams, requiredExtraParams);
 
 const configs = template.children.filter((child) => child.tag === "Config");
-assert.equal(configs.length, 10);
+assert.equal(configs.length, 13);
 const byTarget = new Map(configs.map((config) => [config.attributes.Target, config]));
 assert.equal(byTarget.get("8484")?.attributes.Mode, "tcp");
 assert.equal(byTarget.get("8484")?.text, "8484");
@@ -85,6 +85,12 @@ assert.equal(byTarget.get("/workspace")?.attributes.Required, "false");
 assert.equal(byTarget.get("/workspace")?.text, "");
 assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_ROOT")?.text, "");
 assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_ID")?.text, "unraid-workspace");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES")?.text, "67108864");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_ENTRIES")?.text, "4096");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_BYTES")?.text, "268435456");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES")?.text, "67108864");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_ENTRIES")?.text, "4096");
+assert.equal(byTarget.get("TYPR_COMPANION_WORKSPACE_MAX_BYTES")?.text, "268435456");
 
 const templateSource = await readFile(templatePath, "utf8");
 assert.doesNotMatch(templateSource, /docker\.sock|<Privileged>true<\/Privileged>|<Network>host<\/Network>/i);
