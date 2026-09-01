@@ -104,7 +104,7 @@ export const CURATED_PROVIDER_CATALOG: readonly ManagedProviderDefinition[] = [
     kind: "tex-distribution",
     version: "2026.08",
     description: "Portable TeX Live distribution with common LaTeX packages; installs without administrator rights.",
-    executableNames: ["pdflatex", "latexmk"],
+    executableNames: ["pdflatex", "latexmk", "tlmgr"],
     assets: [
       asset("linux", "x64", "TinyTeX-linux-x86_64-v2026.08.tar.xz", "59685643fb4160f779df5e3d7d78266a86818ebb86ac25c7900723b0fd73a7cd", 152_058_464, "tar.xz"),
       asset("linux", "arm64", "TinyTeX-linux-arm64-v2026.08.tar.xz", "c6713bf6c44048a4902040a08763c611deac3644b844f03d7244ae49a54a2a08", 155_871_496, "tar.xz"),
@@ -167,6 +167,8 @@ export class ProviderManager {
     this.baselineEnvironment = Object.fromEntries([
       "TYPR_COMPANION_PDFLATEX_EXECUTABLE",
       "TYPR_COMPANION_LATEXMK_EXECUTABLE",
+      "TYPR_COMPANION_TLMGR_EXECUTABLE",
+      "TYPR_COMPANION_TEX_ROOT",
       "TYPR_COMPANION_TEXLAB_EXECUTABLE",
       "TYPR_COMPANION_TINYMIST_EXECUTABLE",
       "TYPR_COMPANION_NATIVE_PATH"
@@ -349,6 +351,8 @@ export class ProviderManager {
       const executables = this.absoluteExecutables(active);
       if (executables.pdflatex) process.env.TYPR_COMPANION_PDFLATEX_EXECUTABLE = executables.pdflatex;
       if (executables.latexmk) process.env.TYPR_COMPANION_LATEXMK_EXECUTABLE = executables.latexmk;
+      if (executables.tlmgr) process.env.TYPR_COMPANION_TLMGR_EXECUTABLE = executables.tlmgr;
+      process.env.TYPR_COMPANION_TEX_ROOT = this.installRoot(active.id, active.version);
       const bins = new Set(Object.values(executables).map(dirname));
       process.env.TYPR_COMPANION_NATIVE_PATH = [...bins, process.env.TYPR_COMPANION_NATIVE_PATH ?? process.env.PATH ?? ""].filter(Boolean).join(sep === "\\" ? ";" : ":");
     }
@@ -445,7 +449,9 @@ async function runExtractor(command: string, args: string[]): Promise<void> {
 }
 
 async function findExecutable(root: string, name: string, platform: NodeJS.Platform): Promise<string | undefined> {
-  const expected = platform === "win32" ? `${name}.exe`.toLowerCase() : name;
+  const expected = platform === "win32"
+    ? new Set([`${name}.exe`, `${name}.bat`, `${name}.cmd`].map((value) => value.toLowerCase()))
+    : new Set([name]);
   const pending = [root];
   let visited = 0;
   while (pending.length > 0) {
@@ -456,14 +462,14 @@ async function findExecutable(root: string, name: string, platform: NodeJS.Platf
       if (visited > MAX_DISCOVERY_ENTRIES) throw new Error("Provider archive contains too many entries.");
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) {
-        if (entry.name.toLowerCase() !== expected) continue;
+        if (!expected.has(entry.name.toLowerCase())) continue;
         const target = await realpath(path);
         resolveInside(root, relative(root, target));
         if ((await stat(target)).isFile()) return path;
         continue;
       }
       if (entry.isDirectory()) pending.push(path);
-      else if (entry.isFile() && entry.name.toLowerCase() === expected) return path;
+      else if (entry.isFile() && expected.has(entry.name.toLowerCase())) return path;
     }
   }
   return undefined;

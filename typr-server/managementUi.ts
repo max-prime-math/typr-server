@@ -149,7 +149,7 @@ export const MANAGEMENT_UI_HTML = String.raw`<!doctype html>
         <div class="panelhead"><h2>Access control</h2><span class="badge" id="persistence"></span></div>
         <div class="sidebody">
           <div class="sectiontitle"><h2>Providers and workspace</h2></div>
-          <div class="setting"><strong>Managed data</strong><p class="data-root" id="dataRoot"></p><p id="workspaceSummary"></p></div>
+          <div class="setting"><strong>Managed data</strong><p class="data-root" id="dataRoot"></p><p id="workspaceSummary"></p><button id="updateTexLive">Update TeX Live packages</button></div>
           <div id="managedProviders"></div>
           <div class="setting">
             <label>Require API keys <input type="checkbox" id="requireKeys"></label>
@@ -324,6 +324,13 @@ export const MANAGEMENT_UI_HTML = String.raw`<!doctype html>
 
     document.getElementById('refreshServices').onclick = async function () {
       try { await mutate('/api/services/refresh', 'POST', {}); await refreshSnapshot(); } catch (error) { alert(error.message); }
+    };
+    document.getElementById('updateTexLive').onclick = async function (event) {
+      if (!confirm('Update the active TeX Live installation and all installed packages?')) return;
+      var button = event.currentTarget; button.disabled = true; button.textContent = 'Updating…';
+      try { var value = await mutate('/api/texlive/update', 'POST', {}); alert(value.result.diagnostic); await refreshSnapshot(); }
+      catch (error) { alert(error.message); }
+      finally { button.disabled = false; button.textContent = 'Update TeX Live packages'; }
     };
     async function installProvider(provider) {
       if (!confirm('Download and install verified ' + provider.name + ' ' + provider.version + '?')) return;

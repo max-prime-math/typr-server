@@ -71,7 +71,9 @@ function assertBaseConfig(parsed) {
 
 const statelessConfig = config();
 assertBaseConfig(statelessConfig);
-assert.equal(statelessConfig.services["typr-server"].volumes, undefined);
+const [texCacheMount] = statelessConfig.services["typr-server"].volumes;
+assert.equal(texCacheMount.type, "volume");
+assert.equal(texCacheMount.target, "/var/lib/typr-texlive");
 assert.equal(statelessConfig.services["typr-server"].environment.TYPR_COMPANION_WORKSPACE_ROOT, undefined);
 
 const workspaceConfig = config({ workspace: true });
@@ -84,7 +86,8 @@ assert.equal(
   trustedWorkspaceConfig.services["typr-server"].environment.TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE,
   "1"
 );
-const [workspaceMount] = workspaceConfig.services["typr-server"].volumes;
+const workspaceMount = workspaceConfig.services["typr-server"].volumes.find((mount) => mount.target === "/workspace");
+assert.ok(workspaceMount);
 assert.equal(workspaceMount.type, "bind");
 assert.equal(workspaceMount.source, "/tmp/typr-companion-workspace-contract");
 assert.equal(workspaceMount.target, "/workspace");
@@ -158,6 +161,9 @@ function assertRuntime(containerId, { workspace }) {
   assert.equal(inspected.HostConfig.MemorySwap, 2 * 1024 * 1024 * 1024);
   assert.equal(inspected.HostConfig.NanoCpus, 2_000_000_000);
   assert.equal(inspected.NetworkSettings.Ports["8484/tcp"][0].HostIp, "127.0.0.1");
+  const texCache = inspected.Mounts.find((candidate) => candidate.Destination === "/var/lib/typr-texlive");
+  assert.ok(texCache);
+  assert.equal(texCache.RW, true);
   const mount = inspected.Mounts.find((candidate) => candidate.Destination === "/workspace");
   if (workspace) {
     assert.ok(mount);

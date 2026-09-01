@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 
-export type NativeTool = "latexmk" | "pdflatex" | "texpresso";
+export type NativeTool = "latexmk" | "pdflatex" | "texpresso" | "tlmgr";
 
 const ENVIRONMENT_KEYS: Readonly<Record<NativeTool, string>> = {
   latexmk: "TYPR_COMPANION_LATEXMK_EXECUTABLE",
   pdflatex: "TYPR_COMPANION_PDFLATEX_EXECUTABLE",
-  texpresso: "TYPR_COMPANION_TEXPRESSO_EXECUTABLE"
+  texpresso: "TYPR_COMPANION_TEXPRESSO_EXECUTABLE",
+  tlmgr: "TYPR_COMPANION_TLMGR_EXECUTABLE"
 };
 
 export function nativeTool(tool: NativeTool): string {

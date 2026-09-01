@@ -49,6 +49,7 @@ try {
     "--mount", `type=bind,src=${workspaceRoot},dst=/workspace`,
     "--env", "TYPR_COMPANION_WORKSPACE_ROOT=/workspace",
     "--env", "TYPR_COMPANION_WORKSPACE_ID=docker-test",
+    "--env", "TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES=16777216",
     image
   ])).trim();
 
@@ -104,6 +105,14 @@ try {
     textFile("main.tex", "\\documentclass{article}\n\\usepackage{lmodern,stackengine}\n\\begin{document}\nLatin Modern and stackengine from Docker.\n\\end{document}\n")
   ]);
   assertPdf(latinModernResult, "a LaTeX document using Latin Modern and stackengine");
+
+  const theoremBoxResult = await compile(baseUrl, [
+    textFile("main.tex", "\\documentclass{article}\n\\usepackage{thmbox}\n\\newtheorem[L]{theorem}{Theorem}\n\\begin{document}\n\\begin{theorem}Typr Companion installs missing TeX Live packages on demand.\\end{theorem}\n\\end{document}\n")
+  ]);
+  assertPdf(theoremBoxResult, "a LaTeX document using thmbox installed on demand");
+  const installedPackage = await capture("docker", ["exec", containerId,
+    "/var/lib/typr-texlive/2026.08/bin/typr/tlmgr", "info", "--only-installed", "thmbox"]);
+  assert(/installed:\s+Yes/iu.test(installedPackage), "The missing thmbox package must persist in the writable TeX cache.");
 
   const multiFileResult = await compile(baseUrl, [
     textFile("main.tex", "\\documentclass{article}\n\\begin{document}\n\\input{chapters/intro}\n\\end{document}\n"),
@@ -398,10 +407,19 @@ async function assertExplicitStatelessFallback(imageName) {
     const unauthorizedManagement = await fetch(`${managementUrl}/api/snapshot`);
     assert(unauthorizedManagement.status === 401,
       "Remote container management must reject requests without its administrator password.");
-    const authorizedManagement = await fetch(`${managementUrl}/api/snapshot`, {
-      headers: { Authorization: `Basic ${Buffer.from(`typr:${managementPassword}`).toString("base64")}` }
+    const managementOrigin = new URL(managementUrl).origin;
+    const managementLogin = await fetch(`${managementUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { Origin: managementOrigin, "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "typr", password: managementPassword })
     });
-    assert(authorizedManagement.ok, "Remote container management must accept the configured administrator password.");
+    assert(managementLogin.ok, "Remote container management must accept the configured administrator password.");
+    const sessionCookie = managementLogin.headers.get("set-cookie")?.split(";", 1)[0];
+    assert(sessionCookie, "Remote container management login must issue a session cookie.");
+    const authorizedManagement = await fetch(`${managementUrl}/api/snapshot`, {
+      headers: { Cookie: sessionCookie }
+    });
+    assert(authorizedManagement.ok, "Remote container management must accept its authenticated session.");
     const managementSnapshot = await authorizedManagement.json();
     assert(managementSnapshot.managementPort === 8485,
       "The authenticated management snapshot must report the internal GUI port.");

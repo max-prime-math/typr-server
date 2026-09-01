@@ -64,6 +64,9 @@ export async function prepareCompilerEnvironment(
     openin_any: "p",
     openout_any: "p",
     SDL_VIDEODRIVER: "dummy",
+    ...(process.env.TYPR_COMPANION_TEX_ROOT?.trim()
+      ? { TYPR_COMPANION_TEX_ROOT: process.env.TYPR_COMPANION_TEX_ROOT.trim() }
+      : {}),
     ...extra
   };
 }
@@ -76,9 +79,12 @@ export function spawnSandboxed(
   sandboxRoot = cwd
 ): ChildProcessWithoutNullStreams {
   const launcher = process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE?.trim();
+  const toolchainRoot = env.TYPR_COMPANION_TEX_ROOT?.trim();
   return spawn(
     launcher || command,
-    launcher ? [sandboxRoot, "--", command, ...args] : [...args],
+    launcher
+      ? [sandboxRoot, ...(toolchainRoot ? ["--toolchain-root", toolchainRoot] : []), "--", command, ...args]
+      : [...args],
     {
       cwd,
       detached: process.platform !== "win32",

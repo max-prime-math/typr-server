@@ -16,8 +16,10 @@ import {
   resolveNativeSandbox
 } from "./sandboxPolicy.ts";
 import { prepareWindowsPortableRuntime, windowsCompanionDataRoot } from "./windowsPortable.ts";
+import { prepareBundledTexRuntime } from "./bundledTexRuntime.ts";
 
 await prepareWindowsPortableRuntime();
+await prepareBundledTexRuntime();
 
 const port = parsePort(process.env.TYPR_COMPANION_PORT, 8484);
 const managementPort = parsePort(process.env.TYPR_COMPANION_MANAGEMENT_PORT, 8485);
@@ -62,6 +64,7 @@ const sandboxExecutable = await resolveNativeSandbox({
   ),
   sandboxExecutable: process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE,
   workspaceRoot,
+  texCacheRoot: process.env.TYPR_COMPANION_BUNDLED_TEX_CACHE?.trim(),
   onFallback: (message) => console.warn(message)
 });
 if (sandboxExecutable) process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE = sandboxExecutable;

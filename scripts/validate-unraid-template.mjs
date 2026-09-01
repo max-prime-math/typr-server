@@ -64,7 +64,7 @@ const actualExtraParams = new Set(one(template, "ExtraParams").text.trim().split
 assert.deepEqual(actualExtraParams, requiredExtraParams);
 
 const configs = template.children.filter((child) => child.tag === "Config");
-assert.equal(configs.length, 13);
+assert.equal(configs.length, 14);
 const byTarget = new Map(configs.map((config) => [config.attributes.Target, config]));
 assert.equal(byTarget.get("8484")?.attributes.Mode, "tcp");
 assert.equal(byTarget.get("8484")?.text, "8484");
@@ -75,6 +75,9 @@ assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.attributes.Requ
 assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.attributes.Mask, "true");
 assert.equal(byTarget.get("TYPR_COMPANION_MANAGEMENT_PASSWORD")?.text, "");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOWED_ORIGINS")?.attributes.Description || "", /CORS is not authentication/i);
+assert.equal(byTarget.get("/var/lib/typr-texlive")?.attributes.Mode, "rw");
+assert.equal(byTarget.get("/var/lib/typr-texlive")?.attributes.Required, "true");
+assert.match(byTarget.get("/var/lib/typr-texlive")?.text || "", /typr-companion\/texlive/u);
 assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.text, "1");
 assert.match(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS")?.attributes.Description || "", /no host workspace is mounted/i);
 assert.equal(byTarget.get("TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE")?.text, "");

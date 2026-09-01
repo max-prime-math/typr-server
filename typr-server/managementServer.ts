@@ -5,6 +5,7 @@ import { ActivityBus, type ActivityEvent } from "./activity.ts";
 import { ManagementAuthenticator, type ManagementSession } from "./managementAuth.ts";
 import { MANAGEMENT_LOGIN_HTML, MANAGEMENT_UI_HTML } from "./managementUi.ts";
 import { ProviderManager, ProviderManagerError } from "./providerManager.ts";
+import { activeTexPackageManager } from "./texPackageManager.ts";
 
 export type ManagedServiceStatus = "ready" | "busy" | "degraded" | "detected" | "unavailable" | "error";
 
@@ -185,6 +186,18 @@ async function handleManagementRequest(
       message: "Provider discovery was refreshed from the management console."
     });
     sendJson(response, 200, { ok: true });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/texlive/update") {
+    const result = await activeTexPackageManager().updateAll(AbortSignal.timeout(15 * 60_000));
+    options.activity.publish({
+      serviceId: "latex",
+      level: result.updated ? "info" : "error",
+      type: result.updated ? "texlive-updated" : "texlive-update-failed",
+      message: result.diagnostic
+    });
+    if (!result.updated) throw new ProviderManagerError(502, "texlive-update-failed", result.diagnostic);
+    sendJson(response, 200, { result });
     return;
   }
   const providerInstallMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/install$/u);

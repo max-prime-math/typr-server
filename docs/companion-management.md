@@ -14,8 +14,8 @@ Change the ports with `TYPR_COMPANION_PORT` and
 installs keep management on loopback by default. A container may explicitly set
 `TYPR_COMPANION_MANAGEMENT_HOST=0.0.0.0`; any non-loopback value refuses startup
 unless `TYPR_COMPANION_MANAGEMENT_PASSWORD` contains at least 24 characters.
-The browser then uses HTTP Basic authentication with username `typr` and that
-administrator password. Keep the GUI restricted to a trusted LAN/VPN and put it
+The browser signs in as `typr` and receives a short-lived, HttpOnly management
+session after the administrator password is verified. Keep the GUI restricted to a trusted LAN/VPN and put it
 behind client-trusted HTTPS when that network is not physically trusted.
 
 ## Services and providers
@@ -33,8 +33,11 @@ providers merely detected on the host. It currently shows:
 TexLab and Tinymist detection is informational in this milestone. Companion
 does not advertise LSP languages until an LSP routing transport is implemented.
 **Refresh providers** reruns bounded `--version` probes without executing a
-shell. The console does not yet install distributions, download packages, edit
-executable paths, or start LSP processes.
+shell. With persistent provider storage configured, the console can install and
+activate checksum-pinned TinyTeX 2026.08, TexLab, and Tinymist providers. It
+also exposes **Update TeX Live packages**, which runs the active distribution's
+within-release `tlmgr update --self --all`. Missing-file installs happen
+automatically during final compilation unless explicitly disabled.
 
 ## Users and API keys
 
@@ -78,7 +81,8 @@ On portable Windows, state persists with current-user permissions at:
 Native non-Windows development runs keep management state in memory unless
 `TYPR_COMPANION_MANAGEMENT_STATE` names a writable JSON file. The Unraid
 template exposes the separately authenticated GUI but deliberately remains
-volume-free on its stock-kernel fallback. Its users, service API keys, and
+project-stateless on its stock-kernel fallback; only the TeX package cache is
+mounted. Its users, service API keys, and
 enforcement setting are therefore session-only and reset when the container
 restarts. Do not enable service-key enforcement there unless every Typr client
 can be updated again after a restart. A persistent management-state mount may be
