@@ -12,6 +12,11 @@ export interface NativeProcessResult {
   stderr: string;
 }
 
+export interface NativeProcessOptions {
+  /** Filesystem root exposed to the native sandbox when it differs from cwd. */
+  sandboxRoot?: string;
+}
+
 export class NativeProcessError extends Error {
   readonly code: "compile-timeout" | "compiler-output-limit";
 
@@ -59,6 +64,9 @@ export async function prepareCompilerEnvironment(
     openin_any: "p",
     openout_any: "p",
     SDL_VIDEODRIVER: "dummy",
+    ...(process.env.TYPR_COMPANION_TEX_ROOT?.trim()
+      ? { TYPR_COMPANION_TEX_ROOT: process.env.TYPR_COMPANION_TEX_ROOT.trim() }
+      : {}),
     ...extra
   };
 }
@@ -67,12 +75,16 @@ export function spawnSandboxed(
   command: string,
   args: readonly string[],
   cwd: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  sandboxRoot = cwd
 ): ChildProcessWithoutNullStreams {
   const launcher = process.env.TYPR_COMPANION_SANDBOX_EXECUTABLE?.trim();
+  const toolchainRoot = env.TYPR_COMPANION_TEX_ROOT?.trim();
   return spawn(
     launcher || command,
-    launcher ? [cwd, "--", command, ...args] : [...args],
+    launcher
+      ? [sandboxRoot, ...(toolchainRoot ? ["--toolchain-root", toolchainRoot] : []), "--", command, ...args]
+      : [...args],
     {
       cwd,
       detached: process.platform !== "win32",
@@ -87,9 +99,16 @@ export async function runNativeProcess(
   command: string,
   args: readonly string[],
   cwd: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  options: NativeProcessOptions = {}
 ): Promise<NativeProcessResult> {
-  const child = spawnSandboxed(command, args, cwd, await prepareCompilerEnvironment(cwd));
+  const child = spawnSandboxed(
+    command,
+    args,
+    cwd,
+    await prepareCompilerEnvironment(cwd),
+    options.sandboxRoot ?? cwd
+  );
   return new Promise((resolveRun, rejectRun) => {
     const detached = process.platform !== "win32";
     const stdout: Buffer[] = [];

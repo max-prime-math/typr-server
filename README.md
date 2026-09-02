@@ -13,7 +13,7 @@ device normally requires an HTTPS reverse proxy with WebSocket support because
 an HTTPS Typr page cannot call a plain HTTP/WS Companion.
 On Unraid, use host-level Tailscale Serve for private tailnet HTTPS; the
 per-container **Use Tailscale** injection is incompatible with Companion's
-non-root, read-only stateless boundary. Never enable Tailscale Funnel.
+non-root, read-only narrowly mounted boundary. Never enable Tailscale Funnel.
 
 Browser-local storage remains Typr's default. The file API is disabled unless
 an administrator explicitly maps one trusted directory; native compiler
@@ -25,7 +25,8 @@ multi-tenant service—all users and documents must still be mutually trusted.
 See [the installation guide](docs/companion-installation.md) for the portable
 Windows executable, Docker, Compose, version pinning, rollback, platform
 support, and security guidance.
-The production [`compose.yaml`](compose.yaml) stays stateless by default; the
+The production [`compose.yaml`](compose.yaml) keeps projects stateless and
+caches its pinned TeX Live 2026 runtime/packages in one named volume; the
 separate [`compose.workspace.yaml`](compose.workspace.yaml) override enables one
 exact administrator-selected directory. Unraid users should follow the
 [separate Companion template guide](docs/companion-unraid.md).

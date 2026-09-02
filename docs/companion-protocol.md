@@ -13,7 +13,7 @@ The standalone local `typr-server` implementation is in [`typr-server`](../typr-
 - Compile responses are a discriminated `CompileResult`: `{ ok: true }` includes a base64 PDF, log, engine, and duration; `{ ok: false }` includes the engine, compiler log, a small list of useful errors, and duration when available.
 - When an administrator explicitly maps one fixed workspace, `GET /api/v1/workspace/files` lists regular files and `GET`, `PUT`, and `DELETE /api/v1/workspace/file?path=...` read or conditionally mutate one file. Binary content uses base64; writes require `X-Typr-Workspace-Mutation: 1` plus `If-None-Match: *` for creation or an exact strong `If-Match` ETag for update/deletion.
 
-Workspace storage is disabled when `TYPR_COMPANION_WORKSPACE_ROOT` is unset. When enabled, status advertises `projectStorage: true`, workspace API version 1, an opaque `workspaceId`, writability, and enforced limits. Paths are relative POSIX paths; absolute paths, traversal, `.git`, symlinks, special files, and internal temporary names are rejected. Writes use same-directory atomic replacement. The API intentionally has no arbitrary directory selection, command execution, Git access, recursive deletion, move, watch, or public-network security model.
+Workspace storage is disabled when `TYPR_COMPANION_WORKSPACE_ROOT` is unset. When enabled, status advertises `projectStorage: true`, workspace API version 1, an opaque `workspaceId`, writability, and enforced limits. The default limits are 64 MiB per file, 4,096 files, and 256 MiB total. Paths are relative POSIX paths; absolute paths, traversal, `.git`, symlinks, special files, and internal temporary names are rejected. Writes use same-directory atomic replacement. The API intentionally has no arbitrary directory selection, command execution, Git access, recursive deletion, move, watch, or public-network security model.
 
 ## Versioning and negotiation
 
@@ -29,7 +29,7 @@ Types do not validate JSON received over HTTP. Typr has no established runtime s
 latexmk -norc -pdf -no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error main.tex
 ```
 
-When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, separate 1 MiB process-output and 1 MiB returned-log caps, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. It probes that policy before listening and therefore requires a Linux kernel with usable Landlock support by default. Compiler children can read their ephemeral project and required system toolchain but cannot read the application tree, mapped workspace, or unrelated temporary data. Explicit compatibility opt-ins permit either volume-free stateless use or one audited workspace mount without Landlock for mutually trusted deployments. In trusted-workspace fallback mode, native compiler processes may access mapped files.
+When `latexmk` is absent, it invokes `pdflatex` directly, up to three times, with `-no-shell-escape -interaction=nonstopmode -halt-on-error -file-line-error`. On a canonical missing `.sty`, `.cls`, bibliography-style, or related support-file error, Companion uses the active TeX Live `tlmgr` to search the remote filename database, installs an exact package match, and retries at most three times. Filenames, package identifiers, output, time, and concurrency are bounded; no shell is used. Set `TYPR_COMPANION_TEX_AUTO_INSTALL=0` to opt out. Native work is limited to two concurrent conventional compiles, a 30-second whole-request deadline, separate 1 MiB process-output and 1 MiB returned-log caps, a 32 MiB PDF, 512 input files, and 25 MiB decoded project input. The production image launches native TeX and TeXpresso through a fail-closed Landlock filesystem policy with a scrubbed environment and process/file limits. Compiler children can read their ephemeral project and active TeX tree but cannot mutate the package cache or read the application tree, mapped workspace, or unrelated temporary data.
 
 Start it from the repository root:
 
@@ -42,7 +42,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 ```json
 {
   "protocolVersion": 1,
-  "serverVersion": "0.1.5-dev",
+  "serverVersion": "0.1.6-dev",
   "capabilities": {
     "compile": { "engines": ["pdflatex"] },
     "filesystem": { "projectStorage": false },
@@ -55,7 +55,7 @@ It listens on `http://127.0.0.1:8484` by default. Set `TYPR_COMPANION_PORT` to s
 
 If `pdflatex` is missing, `compile.engines` is `[]`, and a valid `pdflatex` compile request receives a typed `native-compiler-unavailable` failure rather than terminating the server.
 
-By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on port 5173. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
+By default, CORS allows the official Stable, Beta, and Development Typr origins plus Vite's `localhost`, `127.0.0.1`, and IPv6 loopback origins on ports 5173 and 5174. A deployment using another origin can set the comma-separated `TYPR_COMPANION_ALLOWED_ORIGINS` environment variable. The override replaces the default allowlist. No wildcard CORS or public-server security model is provided.
 
 The separate management GUI on port `8485` can enable optional API-key
 authentication. It stays on loopback by default; explicit remote-container mode
@@ -89,6 +89,7 @@ docker run -d --name typr-server --restart unless-stopped \
   --security-opt no-new-privileges:true \
   --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=512m \
   --pids-limit 256 --memory 2g --cpus 2 \
+  --mount type=volume,src=typr-companion-texlive,dst=/var/lib/typr-texlive \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
@@ -129,23 +130,36 @@ The image sets these generic server settings:
 | `TYPR_COMPANION_ALLOWED_ORIGINS` | official Typr and local Vite origins | Optional comma-separated exact-origin override, shared with the native server. |
 | `TYPR_COMPANION_WORKSPACE_ROOT` | unset | Enables the scoped workspace API for one absolute directory, normally `/workspace`. |
 | `TYPR_COMPANION_WORKSPACE_ID` | `default` | Opaque stable identity used by browser bindings; it is not a host path. |
+| `TYPR_COMPANION_WORKSPACE_MAX_FILE_BYTES` | `67108864` | Maximum bytes allowed for one mapped-workspace file. |
+| `TYPR_COMPANION_WORKSPACE_MAX_ENTRIES` | `4096` | Maximum regular-file count in the mapped workspace. |
+| `TYPR_COMPANION_WORKSPACE_MAX_BYTES` | `268435456` | Maximum total workspace bytes; it must be at least the per-file limit. |
 | `TYPR_COMPANION_SANDBOX_EXECUTABLE` | `/usr/local/bin/typr-native-sandbox` | Default fail-closed native compiler launcher. A mapped workspace is refused if this is unavailable unless the separate trusted-workspace fallback is explicitly enabled. |
-| `TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS` | unset | Set exactly `1` only to permit a warned, volume-free trusted-document fallback when the launcher probe fails. It does not enable a mapped workspace. |
+| `TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS` | unset | Set exactly `1` only to permit a warned trusted-document fallback with no host mount except the dedicated TeX cache when the launcher probe fails. It does not enable a mapped workspace. |
 | `TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE` | unset | Set exactly `1` only to permit one warned, audited workspace mount when the launcher probe fails. Native compiler processes may access mapped files; use only mutually trusted users and documents. |
+| `TYPR_COMPANION_TEX_AUTO_INSTALL` | `1` | Set exactly `0` to disable missing-file search/install/retry. Cached and bundled packages continue to compile offline. |
 
 Node is the container's main process; no shell wrapper is used. It handles normal `SIGTERM`/`SIGINT` shutdown by stopping new HTTP work and terminating active LaTeX compiler process groups before the listener closes. The image runs as the non-root `node` user. `/tmp` remains writable for request-local compiler directories.
 
 ### TeX environment and portability
 
-The image uses the multi-architecture `node:22.23.2-bookworm-slim` base, matching the Node 22.6+ requirement for the server's built-in TypeScript type stripping. It installs Debian Bookworm's TeX Live packages:
+The authoritative final compiler is the checksum-pinned TinyTeX 2026.08
+distribution (TeX Live 2026) on both `linux/amd64` and `linux/arm64`. Its broad
+community package set is seeded into a writable, versioned cache on first
+start. Missing packages are installed there and remain available offline.
+Debian's TeX libraries and packages remain in the image for TeXpresso's custom
+engine, but are not the final pdfLaTeX provider.
 
 - `latexmk`
 - `texlive-latex-base`, `texlive-latex-recommended`, and `texlive-latex-extra`
-- `texlive-fonts-recommended` and `texlive-pictures`
+- `lmodern`, `texlive-fonts-recommended`, `texlive-pictures`, and `texlive-plain-generic`
+- `texlive-science` for math/science packages such as `thmbox`
 - `texlive-bibtex-extra` and `biber`
 - `texlive-xetex` (required by the experimental TeXpresso build)
 
-This supplies the advertised `pdflatex` engine and the common document classes, packages, fonts, graphics/TikZ, and bibliography workflows expected by ordinary LaTeX documents. It intentionally does **not** install the complete TeX Live collection or unrelated future tools such as Typst, LSP servers, or Git tooling. `latexmk` is present, so the existing compiler invocation works without modification.
+This supplies the advertised `pdflatex` engine and a large package/font catalog
+without a multi-gigabyte full-scheme image. Rare TeX Live packages are resolved
+on demand. Packages absent from TeX Live itself still require an explicit local
+project file or administrator action.
 
 The Dockerfile has a small TeXpresso build stage and a separate runtime stage. The build stage contains the C/C++ compiler and development headers needed by TeXpresso; the final runtime receives `texpresso`, `texpresso-xetex`, their shared runtime libraries, Node, the existing TeX toolchain, and the small `ws` transport dependency. `typr-server` still has no emitted JavaScript artifact: Node runs its small TypeScript source with the same type-stripping mode used by `npm run companion`. The explicit [`.dockerignore`](../.dockerignore) sends only those runtime files to Docker.
 
@@ -153,9 +167,14 @@ The selected Node base image and Debian packages have `linux/amd64` and `linux/a
 
 ### Toolchain boundary and security
 
-Node, TeX Live, `latexmk`, and their system dependencies are Companion **container toolchain** components: they are versioned by the Dockerfile and supplied by the image. Future document-specific package caches, fonts, and persistent caches are separate project-dependency concerns. No package-management or persistence API is provided here, so adding such a capability later does not need to depend on a host package manager such as apt, Homebrew, winget, or pacman.
+Node, TeX Live, `latexmk`, and their system dependencies are Companion
+**container toolchain** components. Package resolution uses TeX Live's own
+cross-platform `tlmgr`, never apt, Homebrew, winget, pacman, or document-provided
+commands. The management console exposes an explicit within-release
+`tlmgr update --self --all`; annual TeX Live changes use a new pinned
+image/provider so rollback remains possible.
 
-The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. Both explicit fallbacks lack Landlock confinement. Stateless fallback remains volume-free; trusted-workspace fallback permits one audited mount but compiler processes may access its files. Operate only on a trusted LAN/VPN, never expose either port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Optional service API keys authenticate callers but do not create a hostile multi-tenant boundary. The private experimental WebSocket does not change this security model.
+The Companion executes user-authored LaTeX with native tools. Non-root execution, request-local directories, fixed arguments, disabled shell escape/latexmk rc files, bounded work, and Landlock materially confine compiler descendants. They do not make native TeX, MuPDF, or TeXpresso safe for mutually untrusted users. Both explicit fallbacks lack Landlock confinement. The stateless-project fallback permits only the dedicated TeX package cache; trusted-workspace fallback additionally permits one audited project mount and compiler processes may access its files. Operate only on a trusted LAN/VPN, never expose either port to the public internet, and add container-level read-only root, bounded tmpfs, PID, memory, and CPU limits. Optional service API keys authenticate callers but do not create a hostile multi-tenant boundary. The private experimental WebSocket does not change this security model.
 
 Future images may add optional capabilities such as Typst, LSP servers, or Git tooling. TeXpresso is present only as the internal experiment documented below; it is not part of the public Companion protocol or capability advertisement.
 

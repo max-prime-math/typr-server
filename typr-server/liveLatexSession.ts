@@ -4,6 +4,7 @@ import { getAsset, isSea } from "node:sea";
 import type * as MuPdf from "mupdf";
 import type { TexpressoRange } from "../src/companion-protocol/texpresso.ts";
 import { runLatexProject } from "./latexProject.ts";
+import { commandCanSpawn, nativeTool } from "./nativeTools.ts";
 import { hasLatexError, positionToOffset, TexpressoSession, type TexpressoLookup, type TexpressoRenderedPage, type TexpressoSessionOptions, type TexpressoSnapshot } from "./texpressoSession.ts";
 
 export interface LiveLatexSession {
@@ -20,8 +21,13 @@ export interface LiveLatexSession {
 
 /** Uses TeXpresso where upstream supports it and an offline full-build renderer on Windows. */
 export async function startLiveLatexSession(options: TexpressoSessionOptions): Promise<LiveLatexSession> {
-  if (process.platform !== "win32" && process.env.TYPR_COMPANION_LIVE_BACKEND !== "full") {
-    return TexpressoSession.start(options);
+  const texpressoExecutable = options.executable ?? nativeTool("texpresso");
+  if (
+    process.platform !== "win32" &&
+    process.env.TYPR_COMPANION_LIVE_BACKEND !== "full" &&
+    await commandCanSpawn(texpressoExecutable)
+  ) {
+    return TexpressoSession.start({ ...options, executable: texpressoExecutable });
   }
   return FullCompileLiveSession.start(options);
 }

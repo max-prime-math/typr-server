@@ -20,7 +20,7 @@ Release builds include `typr-companion-windows-x64.exe`. Copy that one file to
 the Windows machine and run it as the ordinary signed-in user. The Companion API
 binds to `127.0.0.1:8484` and its management GUI binds separately to
 `127.0.0.1:8485`; it does not install a service, request elevation, write the
-registry, add a firewall rule, or download packages. On first launch it extracts
+registry, or add a firewall rule. On first launch it extracts
 its embedded, checksum-pinned TinyTeX runtime under
 `%LOCALAPPDATA%\Typr Companion\runtime\<version>` and creates the dedicated
 workspace `%LOCALAPPDATA%\Typr Companion\workspace`. Management users, hashed
@@ -45,13 +45,22 @@ pdfLaTeX build after each accepted edit and rasterizes pages with embedded
 MuPDF WebAssembly. The result and recovery behavior are compatible with Typr,
 but updates are slower than TeXpresso's incremental Linux backend.
 
-The executable makes no outbound network requests at runtime, so it works when
-the host firewall blocks Internet access. The browser must still be permitted
+The embedded package set and every package previously installed on demand work
+offline. If compilation reports a supported missing TeX file while online,
+Companion searches the TeX Live database, installs the exact matching package,
+and retries. The management console can also update all packages in the active
+TeX Live release. Set `TYPR_COMPANION_TEX_AUTO_INSTALL=0` to require wholly
+manual package management. The browser must still be permitted
 to connect to loopback. Enterprise WDAC/AppLocker policies may require the
 release publisher or file hash to be allow-listed by IT; the executable does
 not and must not attempt to bypass those policies. Official tagged Windows
 artifacts must be Authenticode-signed. Development/PR artifacts are unsigned
 and are not intended for locked-down production machines.
+
+Automatic font resolution covers fonts distributed through TeX Live when TeX
+reports a concrete missing support or metric filename. It cannot download an
+arbitrary commercial font or infer an operating-system font from a family name;
+place licensed project fonts in the project or install them on that host.
 
 Windows native compiler children use a minimal environment, paranoid TeX input
 and output policies, disabled shell escape, isolated temporary directories,
@@ -95,6 +104,7 @@ docker run -d \
   --memory 2g \
   --memory-swap 2g \
   --cpus 2 \
+  --mount type=volume,src=typr-companion-texlive,dst=/var/lib/typr-texlive \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
@@ -110,7 +120,9 @@ connect. Each value is only `scheme://host[:port]`, with no path or trailing
 slash. CORS is a browser control, not authentication, and origin-less trusted
 clients can still call the service.
 
-No environment variable or volume is required for normal browser-local projects. The server uses temporary per-request/per-session directories and removes them.
+Projects remain request-local and are removed after compilation. The dedicated
+`typr-companion-texlive` volume contains only the versioned TeX runtime and its
+downloaded package cache; it contains no project source or management secret.
 
 To make one trusted host directory available for explicit manual synchronization, add exactly one bind mount and stable opaque ID:
 
@@ -123,7 +135,7 @@ To make one trusted host directory available for explicit manual synchronization
 The directory must be readable and writable by the image's non-root UID 1000. The API exposes regular files only, rejects links/special files/traversal and `.git`, enforces file/count/total-size limits, and conditionally writes or deletes one file at a time with ETags. Deleting a file never prunes its host directories. It does not expose the host path, a file browser, commands, Git, or arbitrary mounts. Compiler processes receive copied request files in a fresh temporary directory and are blocked from `/workspace` by the image's fail-closed Landlock launcher by default. The container probes that launcher before listening. A trusted single-user deployment whose kernel lacks Landlock may explicitly set `TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE=1`; startup then audits for one exact workspace mount, warns that compiler processes may access mapped files, and rejects every additional host/data mount. Unmapping the directory disables the capability without affecting browser-local projects.
 
 `TYPR_COMPANION_ALLOW_UNSANDBOXED_STATELESS=1` is an explicit compatibility
-escape hatch for volume-free hosts whose kernels do not provide Landlock, such
+escape hatch for hosts whose kernels do not provide Landlock, such
 as tested stock Unraid configurations. It permits only stateless compilation of
 mutually trusted documents and logs a warning. It does not permit a mapped
 workspace. The separate `TYPR_COMPANION_ALLOW_UNSANDBOXED_WORKSPACE=1` opt-in
@@ -141,7 +153,7 @@ Typr uses `http://127.0.0.1:8484` by default. To use a Companion behind another 
 On Unraid, use Tailscale on the host with Tailscale Serve when private tailnet
 HTTPS is desired. Do not enable Unraid's per-container **Use Tailscale** hook:
 the injected root-owned startup hook and mount are intentionally incompatible
-with this image's non-root, read-only, volume-free stateless boundary. Keep
+with this image's non-root, read-only, narrowly mounted boundary. Keep
 Tailscale Funnel disabled. The dedicated Unraid guide contains an exact Serve
 example.
 
@@ -160,7 +172,7 @@ docker compose -f compose.dev.yaml up --build
 ```
 
 To enable one workspace, add the separate override and an absolute dedicated
-host path. The base Compose file remains volume-free:
+host path. The base Compose file creates only the dedicated named TeX cache:
 
 ```bash
 export TYPR_COMPANION_WORKSPACE_DIR=/srv/typr/home-workspace
@@ -213,11 +225,14 @@ docker run -d \
   --memory 2g \
   --memory-swap 2g \
   --cpus 2 \
+  --mount type=volume,src=typr-companion-texlive,dst=/var/lib/typr-texlive \
   -p 127.0.0.1:8484:8484 \
   ghcr.io/max-prime-math/typr-server:latest
 ```
 
-There is no self-updater inside the Companion and the PWA cannot mutate Docker. Docker/the host remains responsible for container lifecycle.
+The management console updates packages within the active TeX Live year. A new
+annual TeX Live runtime arrives through a new Companion image/provider; Docker
+or the host remains responsible for that container lifecycle upgrade.
 Mapped-workspace users must include the same bind mount,
 `TYPR_COMPANION_WORKSPACE_ROOT`, and `TYPR_COMPANION_WORKSPACE_ID` arguments used
 for the original installation when recreating a direct-Docker container.
@@ -227,13 +242,13 @@ for the original installation when recreating a direct-Docker container.
 `latest` means the newest stable release, never an arbitrary `dev` build. For reproducible TeX behavior, replace it with a complete release such as:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.5
+ghcr.io/max-prime-math/typr-server:0.1.6
 ```
 
 In Compose:
 
 ```yaml
-image: ghcr.io/max-prime-math/typr-server:0.1.5
+image: ghcr.io/max-prime-math/typr-server:0.1.6
 ```
 
 Run `docker compose pull && docker compose up -d` after changing the tag. Rollback is the same operation with the previous known-good tag. Direct Docker users pull the chosen tag and recreate the container with it.
@@ -255,14 +270,16 @@ Compose installation:
 docker compose down
 ```
 
-There is no Companion cache volume to remove and uninstalling the container does not remove browser-local Typr projects.
+These commands retain the `typr-companion-texlive` package cache. To remove it
+too, run `docker volume rm typr-companion-texlive` only after confirming no
+Companion container uses it. Browser-local Typr projects are unaffected.
 
 ## Security
 
 - Prefer `127.0.0.1:8484:8484` on a single machine. Cross-device access belongs only behind a trusted-LAN/VPN firewall and, for an HTTPS Typr origin, an HTTPS reverse proxy. Never publish it to the public internet.
 - Never use router port forwarding, a public tunnel, or a publicly reachable
   reverse-proxy route for Companion. TLS does not add application authentication.
-- The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox by default, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits. Both explicit Unraid fallbacks are weaker and are for trusted users and documents only; stateless fallback remains volume-free, while trusted-workspace fallback permits one audited mount.
+- The container runs as a non-root user, has an exact origin allowlist, uses a fail-closed native-filesystem sandbox by default, and supports `no-new-privileges`, a read-only root, bounded tmpfs, PID, memory, and CPU limits. Compiler children see the TeX cache read-only; package-manager work runs separately. Both explicit Unraid fallbacks are weaker and are for trusted users and documents only.
 - API-key authentication can be enabled from the local or separately
   administrator-authenticated management GUI. It
   authenticates Companion clients but does not replace network controls or make

@@ -162,6 +162,7 @@ export class TexpressoSession {
       options.projectRoot,
       await prepareCompilerEnvironment(options.projectRoot)
     );
+    await waitForChildProcessStart(child, executable);
     const session = new TexpressoSession(child, options.projectRoot, timeoutMs, options.files);
 
     // -stream starts paused. Register and populate every source buffer before
@@ -525,6 +526,29 @@ export class TexpressoSession {
       for (const listener of this.unexpectedExitListeners) listener(error);
     }
   }
+}
+
+function waitForChildProcessStart(
+  child: ChildProcessWithoutNullStreams,
+  executable: string
+): Promise<void> {
+  return new Promise((resolveStart, rejectStart) => {
+    const cleanup = () => {
+      child.off("spawn", handleSpawn);
+      child.off("error", handleError);
+    };
+    const handleSpawn = () => {
+      cleanup();
+      resolveStart();
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      rejectStart(new Error(`TeXpresso failed to start ${JSON.stringify(executable)}: ${error.message}`));
+    };
+
+    child.once("spawn", handleSpawn);
+    child.once("error", handleError);
+  });
 }
 
 function renderCacheKey(page: number, dpi: number, theme?: TexpressoRenderTheme): string {

@@ -10,6 +10,7 @@ const roots: string[] = [];
 
 afterEach(async () => {
   delete process.env.TYPR_COMPANION_LIVE_BACKEND;
+  delete process.env.TYPR_COMPANION_TEXPRESSO_EXECUTABLE;
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -40,6 +41,28 @@ describe("portable full-build live preview", () => {
       }, "Updated");
       expect(updated.result).toBe("success");
       expect(session.getBuffer("main.tex")).toContain("Updated");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("falls back to full builds when the configured TeXpresso executable is missing", async () => {
+    if (!(await nativeToolAvailable("pdflatex"))) return;
+    process.env.TYPR_COMPANION_TEXPRESSO_EXECUTABLE = "/missing/typr-texpresso";
+    const root = await mkdtemp(join(tmpdir(), "typr-missing-texpresso-test-"));
+    roots.push(root);
+    const content = "\\documentclass{article}\n\\begin{document}\nFallback\n\\end{document}\n";
+    await materializeProjectFiles(root, [{ path: "main.tex", kind: "text", content }]);
+    const session = await startLiveLatexSession({
+      projectRoot: root,
+      mainFilePath: "main.tex",
+      files: [{ path: "main.tex", content }],
+      timeoutMs: 30_000
+    });
+    try {
+      expect(session.pid).toBe(process.pid);
+      expect(session.snapshot().result).toBe("success");
+      expect(await session.getPageCount()).toBe(1);
     } finally {
       await session.close();
     }

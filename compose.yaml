@@ -5,6 +5,8 @@ services:
     user: "1000:1000"
     environment:
       TYPR_COMPANION_ALLOWED_ORIGINS: ${TYPR_COMPANION_ALLOWED_ORIGINS:-}
+    volumes:
+      - typr-texlive:/var/lib/typr-texlive
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -20,3 +22,7 @@ services:
     ports:
       # Keep the trusted-local Companion private to this machine.
       - "${TYPR_COMPANION_BIND_ADDRESS:-127.0.0.1}:${TYPR_COMPANION_PORT:-8484}:8484"
+
+volumes:
+  typr-texlive:
+    name: ${TYPR_COMPANION_TEXLIVE_VOLUME:-typr-companion-texlive}

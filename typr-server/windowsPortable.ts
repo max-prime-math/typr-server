@@ -47,10 +47,13 @@ export async function prepareWindowsPortableRuntime(): Promise<void> {
   }
 
   if (await executableExists(pdflatex)) {
+    process.env.TYPR_COMPANION_TEX_ROOT = tinyTexRoot;
     process.env.TYPR_COMPANION_NATIVE_PATH = [bin, process.env.PATH ?? ""].filter(Boolean).join(delimiter);
     process.env.TYPR_COMPANION_PDFLATEX_EXECUTABLE = pdflatex;
     const latexmk = join(bin, "latexmk.exe");
     if (await executableExists(latexmk)) process.env.TYPR_COMPANION_LATEXMK_EXECUTABLE = latexmk;
+    const tlmgr = join(bin, "tlmgr.bat");
+    if (await executableExists(tlmgr)) process.env.TYPR_COMPANION_TLMGR_EXECUTABLE = tlmgr;
   }
 
   // A dedicated per-user directory exposes the workspace feature without an

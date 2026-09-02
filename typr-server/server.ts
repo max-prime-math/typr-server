@@ -4,6 +4,7 @@ import { lstat, mkdtemp, open as openFile, readFile, rm } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { WebSocketServer } from "ws";
 import {
   TYPR_COMPANION_PROTOCOL_VERSION,
@@ -34,6 +35,7 @@ export { materializeProjectFiles } from "./projectFiles.ts";
 
 const DEFAULT_SERVER_VERSION = "0.1.3-dev";
 const MAX_REQUEST_BYTES = 25 * 1024 * 1024;
+const WORKSPACE_WRITE_BODY_OVERHEAD_BYTES = 64 * 1024;
 const MAX_PROJECT_FILES = 512;
 const MAX_PROJECT_BYTES = 25 * 1024 * 1024;
 const MAX_ACTIVE_COMPILATIONS = 2;
@@ -41,6 +43,7 @@ const MAX_ACTIVE_LIVE_SESSIONS = 2;
 const COMPILE_TIMEOUT_MS = 30_000;
 const MAX_LOG_BYTES = 1024 * 1024;
 const MAX_PDF_BYTES = 32 * 1024 * 1024;
+const MAX_SYNCTEX_BYTES = 32 * 1024 * 1024;
 const IMPLEMENTED_ENGINES = ["pdflatex"] as const;
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "https://typr.ca",
@@ -48,7 +51,10 @@ const DEFAULT_ALLOWED_ORIGINS = new Set([
   "https://dev.typr.ca",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  "http://[::1]:5173"
+  "http://[::1]:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+  "http://[::1]:5174"
 ]);
 
 export interface TyprServerOptions {
@@ -239,6 +245,11 @@ export async function shutdownTyprServer(server: Server): Promise<void> {
 export async function hostHasPdflatex(): Promise<boolean> {
   pdflatexAvailability ??= nativeToolAvailable("pdflatex");
   return pdflatexAvailability;
+}
+
+/** Invalidates the provider probe after management installs or activates a TeX distribution. */
+export function resetPdflatexAvailability(): void {
+  pdflatexAvailability = undefined;
 }
 
 export function getCompanionRuntimeSnapshot(server: Server): CompanionRuntimeSnapshot {
@@ -545,7 +556,10 @@ async function handleWorkspaceRequest(
     if (ifMatch && !isStrongEtag(ifMatch)) {
       throw new WorkspaceError(400, "invalid-workspace-precondition", "Workspace update requires one quoted strong ETag.");
     }
-    const body = await readJsonBody(request);
+    const body = await readJsonBody(
+      request,
+      Math.ceil(workspace.limits.maxFileBytes / 3) * 4 + WORKSPACE_WRITE_BODY_OVERHEAD_BYTES
+    );
     if (!body.ok) throw new WorkspaceError(body.status, "invalid-workspace-request", body.message);
     if (!isWorkspaceWriteRequest(body.value)) {
       throw new WorkspaceError(400, "invalid-workspace-request", "Workspace write body must contain valid base64 content.");
@@ -606,6 +620,7 @@ async function compileProject(
     const pdfPath = await findOutputPdf(workspace, request.mainFilePath);
 
     if (nativeResult.exitCode === 0 && pdfPath) {
+      const synctexPath = await findOutputSynctex(workspace, request.mainFilePath);
       return {
         ok: true,
         engine: request.engine,
@@ -615,6 +630,14 @@ async function compileProject(
           encoding: "base64",
           content: (await readPdf(pdfPath)).toString("base64")
         },
+        ...(synctexPath ? {
+          synctex: {
+            path: relative(workspace, synctexPath).replaceAll("\\", "/"),
+            mediaType: "application/gzip" as const,
+            encoding: "base64" as const,
+            content: (await readSynctex(synctexPath, workspace)).toString("base64")
+          }
+        } : {}),
         log,
         durationMs: elapsedSince(startedAt)
       };
@@ -691,6 +714,42 @@ async function readPdf(path: string): Promise<Buffer> {
   return content;
 }
 
+async function findOutputSynctex(workspace: string, mainFilePath: string): Promise<string | undefined> {
+  const expected = replaceExtension(resolveProjectPath(workspace, mainFilePath), ".synctex.gz");
+  try {
+    const info = await lstat(expected);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new CompileOutputError("compiler-output-invalid", "Compiler SyncTeX output is not a regular file.");
+    }
+    if (info.size > MAX_SYNCTEX_BYTES) {
+      throw new CompileOutputError("compiler-output-too-large", "Compiler SyncTeX output exceeds 32 MiB.");
+    }
+    return expected;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function readSynctex(path: string, workspace: string): Promise<Buffer> {
+  const content = await readFile(path);
+  if (content.byteLength > MAX_SYNCTEX_BYTES) {
+    throw new CompileOutputError("compiler-output-too-large", "Compiler SyncTeX output exceeds 32 MiB.");
+  }
+  const text = gunzipSync(content, { maxOutputLength: MAX_SYNCTEX_BYTES }).toString("utf8");
+  const workspacePrefix = `${workspace.replaceAll("\\", "/")}/`;
+  const normalized = text.replace(/^Input:(\d+):(.+)$/gmu, (_line, tag: string, inputPath: string) => {
+    const portablePath = inputPath.replaceAll("\\", "/");
+    if (!portablePath.startsWith(workspacePrefix)) return `Input:${tag}:${portablePath}`;
+    return `Input:${tag}:${portablePath.slice(workspacePrefix.length).replace(/^\.\//u, "")}`;
+  });
+  const result = gzipSync(normalized);
+  if (result.byteLength > MAX_SYNCTEX_BYTES) {
+    throw new CompileOutputError("compiler-output-too-large", "Compiler SyncTeX output exceeds 32 MiB.");
+  }
+  return result;
+}
+
 async function readTextCapped(path: string, maxBytes: number): Promise<string> {
   const handle = await openFile(path, "r");
   try {
@@ -757,11 +816,11 @@ function elapsedSince(startedAt: number): number {
   return Math.round(performance.now() - startedAt);
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<
+async function readJsonBody(request: IncomingMessage, maxBytes = MAX_REQUEST_BYTES): Promise<
   { ok: true; value: unknown } | { ok: false; status: number; message: string }
 > {
   const declaredLength = Number(request.headers["content-length"]);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) {
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     request.resume();
     return { ok: false, status: 413, message: "Request body is too large." };
   }
@@ -771,7 +830,7 @@ async function readJsonBody(request: IncomingMessage): Promise<
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > MAX_REQUEST_BYTES) {
+    if (length > maxBytes) {
       return { ok: false, status: 413, message: "Request body is too large." };
     }
     chunks.push(buffer);

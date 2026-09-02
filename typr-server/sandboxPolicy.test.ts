@@ -157,6 +157,13 @@ describe("stateless fallback mount policy", () => {
     )).toThrow('unexpected mount "/run/secrets"');
   });
 
+  it("allows one exact dedicated TeX package cache mount", () => {
+    expect(() => validateStatelessFallbackMountInfo(
+      `${standardMounts}\n41 25 0:40 / /var/lib/typr-texlive rw - ext4 /dev/sda1 rw`,
+      "/var/lib/typr-texlive"
+    )).not.toThrow();
+  });
+
   it("rejects a host bind disguised as the scratch directory", () => {
     expect(() => validateStatelessFallbackMountInfo(
       `${standardMounts.replace("34 29 0:31 / /tmp rw,nosuid,nodev,noexec - tmpfs tmpfs rw", "")}\n` +

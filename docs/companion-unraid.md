@@ -5,7 +5,8 @@ title: Install Typr Companion on Unraid
 # Install Typr Companion on Unraid
 
 Typr Companion can run on Unraid from the official
-`ghcr.io/max-prime-math/typr-server` image. It is stateless by default. One
+`ghcr.io/max-prime-math/typr-server` image. Projects are stateless by default;
+the versioned TeX runtime and downloaded packages use one dedicated cache. One
 dedicated host directory can optionally be mapped for explicit manual project
 sync; browser-local Typr remains authoritative.
 
@@ -43,26 +44,28 @@ template:
 5. Set **Management password** to a unique value of at least 24 characters.
    The browser username is `typr`.
 6. Add the exact self-hosted Typr origin to **Allowed Typr origins** if needed.
-7. Leave **Workspace directory** and **Workspace API root** blank for the
+7. Keep **TeX Live package cache** on its dedicated appdata subdirectory and
+   ensure UID 1000 can write it. Do not store projects or secrets there.
+8. Leave **Workspace directory** and **Workspace API root** blank for the
    default stateless deployment. The prefilled Workspace ID is ignored while
    the root is blank.
-8. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
+9. Keep **Allow stateless Unraid fallback** set to `1` on a stock Unraid kernel.
    This setting alone does not permit a mapped workspace without Landlock.
-9. Leave **Allow trusted workspace fallback** blank unless enabling the scoped
+10. Leave **Allow trusted workspace fallback** blank unless enabling the scoped
    workspace on a kernel where the Landlock probe fails.
-10. Apply the template and wait for a healthy container.
+11. Apply the template and wait for a healthy container.
 
 The template enforces UID 1000, non-privileged operation, dropped capabilities,
 no-new-privileges, a read-only root, 512 MiB no-exec tmpfs, 256 PIDs, 2 GiB
 memory/swap, and two CPUs. The image probes its Landlock launcher before
 listening. When that probe fails, the explicit template opt-ins permit either
-the volume-free stateless fallback or one audited workspace mount and log a
+the dedicated-cache-only fallback or one audited workspace mount and log a
 prominent trusted-document warning. Without the matching opt-in, startup fails
 closed.
 
 Open the container's **WebUI** to reach port `8485`, then sign in as `typr` with
 the management password. The GUI shows advertised services and live activity
-and manages service users/API keys. On the stock volume-free fallback this state
+and manages service users/API keys. On the stock fallback this state
 is intentionally session-only and resets whenever the container restarts. API
 key enforcement starts disabled, preserving compatibility with old Typr clients.
 
@@ -113,7 +116,8 @@ Unraid server. An HTTPS Typr page also cannot call a plain HTTP/WS Companion
 because the browser blocks mixed content. Create a dedicated client-trusted HTTPS
 hostname restricted by firewall or VPN to trusted clients. Forward it to
 `http://UNRAID-IP:8484`, enable WebSocket upgrades, use a long read timeout, and
-allow request bodies of at least 25 MiB. For example:
+allow request bodies of at least 90 MiB so a base64-encoded 64 MiB workspace
+file can pass through. For example:
 
 ```nginx
 location / {
@@ -123,7 +127,7 @@ location / {
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
-    client_max_body_size 25m;
+    client_max_body_size 90m;
 }
 ```
 
@@ -185,7 +189,7 @@ native TeX behavior, change Repository to a complete version after it is
 published, for example:
 
 ```text
-ghcr.io/max-prime-math/typr-server:0.1.5
+ghcr.io/max-prime-math/typr-server:0.1.6
 ```
 
 Rollback uses the same field with the prior known-good version. Removing the

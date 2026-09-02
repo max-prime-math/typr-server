@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 
-export type NativeTool = "latexmk" | "pdflatex" | "texpresso";
+export type NativeTool = "latexmk" | "pdflatex" | "texpresso" | "tlmgr";
 
 const ENVIRONMENT_KEYS: Readonly<Record<NativeTool, string>> = {
   latexmk: "TYPR_COMPANION_LATEXMK_EXECUTABLE",
   pdflatex: "TYPR_COMPANION_PDFLATEX_EXECUTABLE",
-  texpresso: "TYPR_COMPANION_TEXPRESSO_EXECUTABLE"
+  texpresso: "TYPR_COMPANION_TEXPRESSO_EXECUTABLE",
+  tlmgr: "TYPR_COMPANION_TLMGR_EXECUTABLE"
 };
 
 export function nativeTool(tool: NativeTool): string {
@@ -17,6 +18,21 @@ export function commandAvailable(command: string): Promise<boolean> {
     const child = spawn(command, ["--version"], { shell: false, stdio: "ignore" });
     child.once("error", () => resolveAvailability(false));
     child.once("close", (code) => resolveAvailability(code === 0));
+  });
+}
+
+export function commandCanSpawn(command: string): Promise<boolean> {
+  return new Promise((resolveAvailability) => {
+    let settled = false;
+    const child = spawn(command, ["--version"], { shell: false, stdio: "ignore" });
+    child.once("spawn", () => {
+      settled = true;
+      resolveAvailability(true);
+      child.kill();
+    });
+    child.once("error", () => {
+      if (!settled) resolveAvailability(false);
+    });
   });
 }
 
